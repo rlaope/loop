@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 test("Codex plugin manifest points at skills", async () => {
@@ -39,13 +39,19 @@ test("CLI dry-run writes durable state without source edits", async () => {
   assert.equal(state.verificationEvidence[0].status, "passed");
 });
 
-test("manifest capability matches dry-run only executable surface", async () => {
+/** @param {string[]} args @param {string} cwd */
+function git(args, cwd) {
+  execFileSync("git", args, { cwd, stdio: "ignore" });
+}
+
+test("manifest capability matches explicit CLI surfaces", async () => {
   const manifest = JSON.parse(await readFile(".codex-plugin/plugin.json", "utf8"));
   const help = execFileSync(process.execPath, ["bin/loop.js", "--help"], { encoding: "utf8" });
 
   assert.equal(manifest.interface.capabilities.includes("Write"), false);
   assert.match(help, /--dry-run/);
-  assert.match(help, /strict dry-run\/read-only/);
+  assert.match(help, /--agent codex/);
+  assert.match(help, /Agent write mode requires explicit approval/);
 });
 
 test("CLI prints help and package version", async () => {
@@ -77,6 +83,57 @@ test("CLI reports state write failures without an uncaught stack trace", async (
   assert.match(result.stderr, /State write failed:/);
   assert.doesNotMatch(result.stderr, /at async|Error:/);
   assert.equal(result.stdout, "");
+});
+
+test("CLI codex agent mode runs through policy gate and records state", async () => {
+  const repo = await mkdtemp(join(tmpdir(), "loop-agent-repo-"));
+  const fakeBin = await mkdtemp(join(tmpdir(), "loop-fake-bin-"));
+  const stateDir = join(repo, ".loop");
+  const fakeCodex = join(fakeBin, "codex");
+  await writeFile(fakeCodex, [
+    "#!/usr/bin/env node",
+    "import { writeFileSync } from 'node:fs';",
+    "writeFileSync('codex-args.json', JSON.stringify(process.argv.slice(2), null, 2));"
+  ].join("\n"));
+  await chmod(fakeCodex, 0o755);
+  git(["init", "-b", "main"], repo);
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      resolve("bin/loop.js"),
+      "--agent",
+      "codex",
+      "--write",
+      "--isolation",
+      "local",
+      "--acknowledge-local",
+      "--allow-no-remote",
+      "--objective",
+      "Build a site",
+      "--state-dir",
+      stateDir
+    ],
+    {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`
+      }
+    }
+  );
+  const output = JSON.parse(result.stdout);
+  const state = JSON.parse(await readFile(output.paths.jsonPath, "utf8"));
+  const codexArgs = JSON.parse(await readFile(join(repo, "codex-args.json"), "utf8"));
+
+  assert.equal(result.status, 0);
+  assert.equal(output.agent, "codex");
+  assert.equal(state.phase, "verify");
+  assert.equal(state.approvals.humanApproval, true);
+  assert.equal(state.verificationEvidence.at(-1).status, "passed");
+  assert.deepEqual(codexArgs.slice(0, 2), ["exec", "--sandbox"]);
+  assert.ok(codexArgs.includes("workspace-write"));
 });
 
 test("CLI rejects flags that are missing values", () => {

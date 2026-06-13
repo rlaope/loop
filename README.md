@@ -61,6 +61,8 @@ Loop is built around six working components:
 - Repo-boundary and isolation preflight helpers for code-changing work.
 - A Codex plugin manifest and `$loop` skill.
 - A dry-run CLI path that writes state without changing source files.
+- A Codex CLI adapter that can hand an objective to `codex exec` with explicit
+  write approval and isolation checks.
 
 ## Quickstart
 
@@ -82,9 +84,18 @@ loop --dry-run --objective "Build a darkwear luxury exhibition site"
 The command writes a durable state record under `.loop/runs/` and updates the
 latest-run index.
 
-The current CLI is strict dry-run/read-only. Source edits and write-capable
-automation are intentionally not exposed until the write policy gate is wired
-into a later adapter surface.
+Dry-run mode is intentionally read-only. To hand the objective to Codex and let
+it work in the current repository, run from the repository root:
+
+```sh
+git init
+loop --agent codex --write --isolation local --acknowledge-local --allow-no-remote --objective "Build a darkwear luxury exhibition site"
+```
+
+That command records Loop state, checks the repository boundary, then launches
+`codex exec` with a workspace-write sandbox. Use `--isolation branch` or
+`--isolation worktree` when you are running inside an isolated branch or
+worktree.
 
 To verify the package:
 

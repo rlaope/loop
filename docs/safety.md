@@ -48,8 +48,10 @@ Code-changing loops must choose one of:
 The repo-boundary preflight fails when the checkout resolves to an unexpected
 parent git root or remote.
 
-The MVP CLI is strict dry-run/read-only. It writes durable Loop state but does
-not expose source edits or write-capable automation. Future write surfaces must
+Dry-run mode is strict read-only. It writes durable Loop state but does not
+expose source edits.
+
+Agent mode can launch Codex through `codex exec`. Write-capable agent runs must
 call the shared policy gate before side effects; the write-mode gate requires
 durable approval, isolation, and repo-boundary preflight evidence.
 
