@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import { isTerminalOutcome } from "./outcomes.js";
 
 const DEFAULT_BUDGET = Object.freeze({
@@ -111,10 +113,11 @@ export function createRunState({
 
   const timestamp = now.toISOString();
   const objectiveSlug = slugifyObjective(objective);
+  const runNonce = randomBytes(4).toString("hex");
 
   return {
     schemaVersion: 1,
-    id: `${objectiveSlug}-${timestamp.replace(/[:.]/g, "")}`,
+    id: `${objectiveSlug}-${timestamp.replace(/[:.]/g, "")}-${runNonce}`,
     objective,
     objectiveSlug,
     phase: "intake",

@@ -2,29 +2,44 @@
 
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { emitKeypressEvents } from "node:readline";
 import { createInterface } from "node:readline/promises";
 
 import {
   appendEvidence,
   checkRepoBoundary,
   createRunState,
+  dashboardActionForRun,
+  dashboardUrl,
+  getDashboardStatus,
   evaluatePolicyGate,
+  listWikiNotes,
   printHelp,
+  readWikiNote,
   recordBudgetActivity,
+  renderWikiList,
+  serveWikiDashboard,
+  startDetachedWikiDashboard,
   transitionRunState,
+  WIKI_FAILURE_EXIT_CODE,
+  waitForDashboardReady,
+  wikiNotePath,
+  writeWikiForRunState,
   writeRunState
 } from "../src/index.js";
 
 const rawArgs = process.argv.slice(2);
-const command = rawArgs[0] === "run" ? "run" : undefined;
+const command = rawArgs[0] === "run" || rawArgs[0] === "wiki" ? rawArgs[0] : undefined;
 const args = command ? rawArgs.slice(1) : rawArgs;
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const flagsWithValues = new Set([
   "--agent",
   "--expected-remote",
   "--expected-root",
+  "--host",
   "--isolation",
   "--objective",
+  "--port",
   "--state-dir"
 ]);
 
@@ -44,6 +59,30 @@ function valueFor(flag) {
 /** @param {string} flag */
 function has(flag) {
   return args.includes(flag);
+}
+
+/** @param {string | undefined} value */
+function parsePort(value) {
+  if (value === undefined) {
+    return 3846;
+  }
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid port: ${value}`);
+  }
+  return port;
+}
+
+function dashboardHost() {
+  const host = valueFor("--host") ?? "127.0.0.1";
+  if (host !== "127.0.0.1") {
+    throw new Error("Loop Wiki dashboard only supports 127.0.0.1");
+  }
+  return host;
+}
+
+function dashboardPort() {
+  return parsePort(valueFor("--port"));
 }
 
 function positionalArgs() {
@@ -136,6 +175,68 @@ async function chooseAgent() {
   }
 }
 
+async function chooseDashboardStart() {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    return false;
+  }
+  emitKeypressEvents(process.stdin);
+  const previousRawMode = process.stdin.isRaw;
+  if (typeof process.stdin.setRawMode === "function") {
+    process.stdin.setRawMode(true);
+  }
+  process.stdin.resume();
+  const options = ["Yes", "No"];
+  let selected = 0;
+  const render = () => {
+    process.stdout.write(`\rStart Loop Wiki dashboard? ${options.map((option, index) => (
+      index === selected ? `[${option}]` : ` ${option} `
+    )).join("  ")} `);
+  };
+  try {
+    render();
+    return await new Promise((resolve) => {
+      /**
+       * @param {string} _str
+       * @param {{ name?: string }} key
+       */
+      const onKeypress = (_str, key) => {
+        if (key.name === "left" || key.name === "right" || key.name === "tab") {
+          selected = selected === 0 ? 1 : 0;
+          render();
+          return;
+        }
+        if (key.name === "y") {
+          selected = 0;
+          render();
+          cleanup(true);
+          return;
+        }
+        if (key.name === "n" || key.name === "escape") {
+          selected = 1;
+          render();
+          cleanup(false);
+          return;
+        }
+        if (key.name === "return" || key.name === "enter") {
+          cleanup(selected === 0);
+        }
+      };
+      /** @param {boolean} value */
+      const cleanup = (value) => {
+        process.stdin.off("keypress", onKeypress);
+        process.stdout.write("\n");
+        resolve(value);
+      };
+      process.stdin.on("keypress", onKeypress);
+    });
+  } finally {
+    if (typeof process.stdin.setRawMode === "function") {
+      process.stdin.setRawMode(Boolean(previousRawMode));
+    }
+    process.stdin.pause();
+  }
+}
+
 /** @param {string} objective */
 async function clarifyObjective(objective) {
   if (!needsDeepInterview(objective)) {
@@ -161,6 +262,118 @@ async function clarifyObjective(objective) {
   } finally {
     rl.close();
   }
+}
+
+/** @param {unknown} error */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * @param {string} target
+ */
+function openTarget(target) {
+  if (!process.stdout.isTTY) {
+    return;
+  }
+  /** @type {Partial<Record<NodeJS.Platform, string>>} */
+  const commandByPlatform = {
+    darwin: "open",
+    win32: "cmd",
+    linux: "xdg-open"
+  };
+  const opener = commandByPlatform[process.platform];
+  if (!opener) {
+    return;
+  }
+  const argsForOpen = process.platform === "win32" ? ["/c", "start", "", target] : [target];
+  spawnSync(opener, argsForOpen, { stdio: "ignore" });
+}
+
+async function handleWikiCommand() {
+  let stateDir;
+  try {
+    stateDir = valueFor("--state-dir") ?? ".loop";
+  } catch (error) {
+    process.stderr.write(`${errorMessage(error)}\n\n`);
+    printHelp(process.stderr);
+    process.exit(1);
+  }
+
+  const positionals = positionalArgs();
+  const subcommand = positionals[0] ?? "serve";
+  const id = positionals[1];
+
+  if (subcommand === "list") {
+    try {
+      const notes = await listWikiNotes({ stateDir });
+      process.stdout.write(renderWikiList(notes));
+      process.exit(0);
+    } catch (error) {
+      process.stderr.write(`Wiki list failed: ${errorMessage(error)}\n`);
+      process.exit(1);
+    }
+  }
+
+  if (subcommand === "read") {
+    if (!id) {
+      process.stderr.write("loop wiki read requires a note id\n");
+      process.exit(1);
+    }
+    try {
+      const note = await readWikiNote(id, { stateDir });
+      process.stdout.write(note.markdown);
+      process.exit(0);
+    } catch (error) {
+      process.stderr.write(`Wiki note read failed: ${errorMessage(error)}\n`);
+      process.exit(1);
+    }
+  }
+
+  if (subcommand === "open") {
+    if (!id) {
+      process.stderr.write("loop wiki open requires a note id\n");
+      process.exit(1);
+    }
+    try {
+      await readWikiNote(id, { stateDir });
+      const notePath = wikiNotePath({ stateDir, id });
+      process.stdout.write(`${notePath}\n`);
+      openTarget(notePath);
+      process.exit(0);
+    } catch (error) {
+      process.stderr.write(`Wiki note open failed: ${errorMessage(error)}\n`);
+      process.exit(1);
+    }
+  }
+
+  if (subcommand === "serve") {
+    let host;
+    let port;
+    try {
+      host = dashboardHost();
+      port = dashboardPort();
+    } catch (error) {
+      process.stderr.write(`${errorMessage(error)}\n\n`);
+      printHelp(process.stderr);
+      process.exit(1);
+    }
+    try {
+      const served = await serveWikiDashboard({ stateDir, host, port });
+      process.stdout.write(`Loop Wiki dashboard: ${served.url}\n`);
+      if (served.server) {
+        await new Promise(() => {});
+      }
+      process.exit(0);
+    } catch (error) {
+      process.stderr.write(`Loop Wiki dashboard failed: ${errorMessage(error)}\n`);
+      process.exit(1);
+    }
+  }
+
+  process.stderr.write(`Unknown wiki command: ${subcommand}\n\n`);
+  printHelp(process.stderr);
+  process.exit(1);
 }
 
 /**
@@ -211,6 +424,68 @@ async function writeInitialRunState({ objective, stateDir, writeMode, agent }) {
 }
 
 /**
+ * @param {import("../src/core/run-state.js").LoopRunState} state
+ * @param {{ jsonPath?: string, summaryPath?: string }} paths
+ * @param {{ stateDir: string, context: string }} options
+ */
+async function writeWikiOrExit(state, paths, { stateDir, context }) {
+  try {
+    return await writeWikiForRunState(state, { stateDir, paths });
+  } catch (error) {
+    process.stderr.write(`Wiki write failed after durable state write: ${errorMessage(error)}\n`);
+    process.stderr.write(`Context: ${context}\n`);
+    if (paths.jsonPath || paths.summaryPath) {
+      process.stderr.write(`Durable state paths: ${JSON.stringify(paths)}\n`);
+    }
+    process.exit(WIKI_FAILURE_EXIT_CODE);
+  }
+}
+
+/**
+ * @param {{ stateDir: string, explicitFlag: boolean, host: string, port: number }} options
+ */
+async function maybeStartDashboardForRun({ stateDir, explicitFlag, host, port }) {
+  const status = await getDashboardStatus({ host, port });
+  if (status.occupied) {
+    process.stderr.write(`Loop Wiki dashboard port ${port} is occupied by another service; not starting dashboard.\n`);
+    return;
+  }
+  let consent = false;
+  const initialAction = dashboardActionForRun({
+    dashboardRunning: status.running,
+    stdinTTY: Boolean(process.stdin.isTTY),
+    stdoutTTY: Boolean(process.stdout.isTTY),
+    explicitFlag
+  });
+  let action = initialAction;
+  if (initialAction === "ask") {
+    consent = await chooseDashboardStart();
+    action = dashboardActionForRun({
+      dashboardRunning: false,
+      stdinTTY: true,
+      stdoutTTY: true,
+      explicitFlag: false,
+      userConsent: consent
+    });
+  }
+  if (action !== "start") {
+    return;
+  }
+  const pid = startDetachedWikiDashboard({
+    scriptPath: new URL(import.meta.url).pathname,
+    stateDir,
+    host,
+    port
+  });
+  const ready = await waitForDashboardReady({ host, port });
+  if (ready.running) {
+    process.stdout.write(`Loop Wiki dashboard: ${dashboardUrl({ host, port })}\n`);
+    return;
+  }
+  process.stderr.write(`Loop Wiki dashboard did not confirm startup${pid ? ` (pid ${pid})` : ""}.\n`);
+}
+
+/**
  * @param {"codex" | "claudecode"} agent
  * @param {string} prompt
  * @param {boolean} writeMode
@@ -253,6 +528,9 @@ function agentCommand(agent, prompt, writeMode) {
  * @param {boolean} options.allowNoRemote
  * @param {string | undefined} options.isolationMode
  * @param {boolean} options.acknowledgeLocal
+ * @param {boolean} options.wikiDashboard
+ * @param {string} options.dashboardHost
+ * @param {number} options.dashboardPort
  */
 async function runAgent({
   agent,
@@ -263,7 +541,10 @@ async function runAgent({
   expectedRemote,
   allowNoRemote,
   isolationMode,
-  acknowledgeLocal
+  acknowledgeLocal,
+  wikiDashboard,
+  dashboardHost: host,
+  dashboardPort: port
 }) {
   const { state, paths } = await writeInitialRunState({ objective, stateDir, writeMode, agent });
   const gate = evaluatePolicyGate(state, {
@@ -296,6 +577,14 @@ async function runAgent({
     process.exit(3);
   }
 
+  await writeWikiOrExit(state, paths, { stateDir, context: "initial run state" });
+  await maybeStartDashboardForRun({
+    stateDir,
+    explicitFlag: wikiDashboard,
+    host,
+    port
+  });
+
   const prompt = buildAgentPrompt(objective, { writeMode });
   const command = agentCommand(agent, prompt, writeMode);
   const result = spawnSync(command.command, command.args, {
@@ -318,7 +607,8 @@ async function runAgent({
     }), "failed", {
       nextAction: `install or authenticate ${agent}, then rerun the loop`
     });
-    await writeRunState(failed, { stateDir });
+    const failedPaths = await writeRunState(failed, { stateDir });
+    await writeWikiOrExit(failed, failedPaths, { stateDir, context: "agent start failure" });
     process.stderr.write(`${agent} agent failed to start: ${result.error.message}\n`);
     process.exit(5);
   }
@@ -343,12 +633,14 @@ async function runAgent({
         nextAction: `inspect ${agent} output and rerun with a smaller objective`
       });
   const finalPaths = await writeRunState(finalState, { stateDir });
+  const wikiPaths = await writeWikiOrExit(finalState, finalPaths, { stateDir, context: "final run state" });
 
   process.stdout.write(`${JSON.stringify({
     ok: exitCode === 0,
     agent,
     stateId: finalState.id,
     paths: finalPaths,
+    wikiPaths,
     initialPaths: paths,
     exitCode
   }, null, 2)}\n`);
@@ -363,6 +655,10 @@ if (has("--help") || has("-h")) {
 if (has("--version") || has("-v")) {
   process.stdout.write(`${packageJson.version}\n`);
   process.exit(0);
+}
+
+if (command === "wiki") {
+  await handleWikiCommand();
 }
 
 let objective;
@@ -435,8 +731,9 @@ if (has("--dry-run")) {
     process.stderr.write(`State write failed: ${message}\n`);
     process.exit(4);
   }
+  const wikiPaths = await writeWikiOrExit(state, paths, { stateDir, context: "dry-run state" });
 
-  process.stdout.write(`${JSON.stringify({ ok: true, stateId: state.id, paths }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: true, stateId: state.id, paths, wikiPaths }, null, 2)}\n`);
   process.exit(0);
 }
 
@@ -445,11 +742,15 @@ if (command === "run" || has("--agent")) {
   let expectedRoot;
   let expectedRemote;
   let isolationMode;
+  let host;
+  let port;
   try {
     resolvedAgent = normalizeAgent(valueFor("--agent")) ?? await chooseAgent();
     expectedRoot = valueFor("--expected-root");
     expectedRemote = valueFor("--expected-remote");
     isolationMode = valueFor("--isolation") ?? "local";
+    host = dashboardHost();
+    port = dashboardPort();
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n\n`);
     printHelp(process.stderr);
@@ -474,7 +775,10 @@ if (command === "run" || has("--agent")) {
     expectedRemote,
     allowNoRemote: has("--allow-no-remote") || command === "run",
     isolationMode,
-    acknowledgeLocal: has("--acknowledge-local") || command === "run"
+    acknowledgeLocal: has("--acknowledge-local") || command === "run",
+    wikiDashboard: has("--wiki-dashboard"),
+    dashboardHost: host,
+    dashboardPort: port
   });
 }
 

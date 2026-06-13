@@ -1,9 +1,9 @@
 # Roadmap
 
 This roadmap keeps the first release honest: the MVP ships durable Loop state,
-dry-run safety checks, and a prototype `loop run` surface for Codex and Claude
-Code. Rich automation, native command adapters, and long-term knowledge storage
-remain future work.
+dry-run safety checks, a local Loop Wiki, and a prototype `loop run` surface for
+Codex and Claude Code. Rich automation, native command adapters, external sync,
+and hosted knowledge storage remain future work.
 
 ## Claude Code Adapter
 
@@ -17,12 +17,12 @@ remain future work.
 
 ## Knowledge Store
 
-- Accumulate human-readable run summaries, decisions, blockers, and evidence
-  into a future knowledge store.
-- Shape the store like an LLM-readable project wiki so humans can inspect work
-  without reading raw chat transcripts.
-- Keep `.loop/runs/*.json` and `.loop/runs/*.md` as the append-only baseline
-  until richer sync targets exist.
+- Ship a local Loop Wiki baseline under `.loop/wiki`.
+- Keep `.loop/wiki/user/*.md` as the canonical human-readable note.
+- Derive `.loop/wiki/ai/*.json`, `.loop/wiki/index.json`, and
+  `.loop/wiki/graph.json` from the canonical note and run metadata.
+- Keep exact token usage as `unknown` unless an agent reports it directly.
+- Defer external sync to GitHub, Linear, Notion, Obsidian, or cloud services.
 
 ## Plugins And Connectors
 
