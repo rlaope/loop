@@ -1,14 +1,22 @@
 # Loop
 
 <p align="center">
+  <a href="https://github.com/rlaope/loop">
+    <img src="https://img.shields.io/badge/GitHub-rlaope%2Floop-181717?logo=github&logoColor=white" alt="GitHub repository">
+  </a>
   <a href="https://github.com/rlaope/loop/actions/workflows/ci.yml">
     <img src="https://github.com/rlaope/loop/actions/workflows/ci.yml/badge.svg" alt="CI">
   </a>
+  <a href="https://github.com/rlaope/loop/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/rlaope/loop" alt="License">
+  </a>
+  <a href="#quickstart">
+    <img src="https://img.shields.io/badge/npm-github%3Arlaope%2Floop-CB3837?logo=npm&logoColor=white" alt="npm install from GitHub">
+  </a>
+  <img src="https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js&logoColor=white" alt="Node.js >= 20">
 </p>
 
-<p align="center">
-  <img src="assets/loop-engineering-poster.png" alt="Loop Engineering poster" width="640">
-</p>
+![Loop Engineering poster](assets/loop-engineering-poster.png)
 
 <div align="center">
   <p><strong>Recursive goals for coding agents that need memory, budgets, and stopping rules.</strong></p>
