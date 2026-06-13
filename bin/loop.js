@@ -174,10 +174,14 @@ async function chooseWithArrows({ title, options, escapeIndex = 0 }) {
   process.stdin.resume();
   let selected = 0;
   let renderedLines = 0;
-  const render = () => {
-    if (renderedLines > 0) {
-      process.stdout.write(`\x1b[${renderedLines}F\x1b[J`);
+  /** @param {number} lines */
+  const clearRenderedLines = (lines) => {
+    if (lines > 0) {
+      process.stdout.write(`\x1b[${lines}F\x1b[J`);
     }
+  };
+  const render = () => {
+    clearRenderedLines(renderedLines);
     const lines = [
       title,
       "Use arrow keys, then Enter.",
@@ -191,9 +195,10 @@ async function chooseWithArrows({ title, options, escapeIndex = 0 }) {
     return await new Promise((resolve) => {
       /**
        * @param {string} _str
-       * @param {{ name?: string }} key
+       * @param {{ name?: string, sequence?: string }} key
        */
       const onKeypress = (_str, key) => {
+        const sequence = key.sequence ?? _str;
         if (key.name === "up" || key.name === "left") {
           selected = selected === 0 ? options.length - 1 : selected - 1;
           render();
@@ -205,16 +210,25 @@ async function chooseWithArrows({ title, options, escapeIndex = 0 }) {
           return;
         }
         if (key.name === "escape") {
-          cleanup(options[escapeIndex]?.value ?? options[0].value);
+          const escapeOption = options[escapeIndex] ?? options[0];
+          cleanup(escapeOption.value, escapeOption.label);
           return;
         }
-        if (key.name === "return" || key.name === "enter") {
-          cleanup(options[selected].value);
+        if (key.name === "return" || key.name === "enter" || sequence === "\r" || sequence === "\n") {
+          cleanup(options[selected].value, options[selected].label);
         }
       };
-      /** @param {T} value */
-      const cleanup = (value) => {
+      /**
+       * @param {T} value
+       * @param {string} [label]
+       */
+      const cleanup = (value, label) => {
         process.stdin.off("keypress", onKeypress);
+        clearRenderedLines(renderedLines);
+        if (label) {
+          process.stdout.write(`${title} ${label}\n`);
+        }
+        renderedLines = 0;
         resolve(value);
       };
       process.stdin.on("keypress", onKeypress);
