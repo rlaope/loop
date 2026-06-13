@@ -16,9 +16,7 @@ are roadmap work after the core contract is stable.
 
 ## Loop Engineering Components
 
-<p align="center">
-  <img src="assets/loop-engineering-components.png" alt="Loop Engineering components" width="640">
-</p>
+![Loop Engineering components](assets/loop-engineering-components.png)
 
 Loop is built around six working components:
 
