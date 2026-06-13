@@ -1,8 +1,8 @@
+# Loop
+
 <p align="center">
   <img src="assets/loop-engineering-poster.png" alt="Loop Engineering poster" width="640">
 </p>
-
-# Loop
 
 Loop is a safety-first Loop Engineering toolkit for coding agents.
 
@@ -14,11 +14,11 @@ The MVP proves the shared core and Codex `$loop` adapter first. Claude Code
 `/loop`, connectors, scheduled write automation, and marketplace distribution
 are roadmap work after the core contract is stable.
 
+## Loop Engineering Components
+
 <p align="center">
   <img src="assets/loop-engineering-components.png" alt="Loop Engineering components" width="640">
 </p>
-
-## Loop Engineering Components
 
 Loop is built around six working components:
 
