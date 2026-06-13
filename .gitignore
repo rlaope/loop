@@ -1,0 +1,10 @@
+node_modules/
+coverage/
+dist/
+.DS_Store
+
+# Local Loop runtime state.
+.loop/
+
+# OMX planning/runtime state is local agent context, not package source.
+.omx/
