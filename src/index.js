@@ -65,6 +65,6 @@ export function printHelp(stream) {
   stream.write(`  --no-interview   Skip ambiguity interview for automation or tests.\n`);
   stream.write(`\n`);
   stream.write(`Dry-run mode writes durable Loop state and local wiki artifacts only.\n`);
-  stream.write(`Run mode records state, asks clarifying questions when needed, then launches the selected agent.\n`);
+  stream.write(`Run mode records state, creates a local git boundary when needed, asks clarifying questions, then launches the selected agent.\n`);
   stream.write(`Wiki mode reads local .loop/wiki notes and serves a localhost dashboard.\n`);
 }

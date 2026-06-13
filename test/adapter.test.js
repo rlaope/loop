@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -83,6 +84,11 @@ test("CLI dry-run reports wiki failure after durable state write", async () => {
 /** @param {string[]} args @param {string} cwd */
 function git(args, cwd) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
+}
+
+/** @param {string} cwd */
+function gitRoot(cwd) {
+  return execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8" }).trim();
 }
 
 test("manifest capability matches explicit CLI surfaces", async () => {
@@ -173,6 +179,94 @@ test("CLI codex agent mode runs through policy gate and records state", async ()
   assert.deepEqual(codexArgs.slice(0, 2), ["exec", "--sandbox"]);
   assert.ok(codexArgs.includes("workspace-write"));
   assert.match(output.wikiPaths.notePath, /wiki\/user/);
+});
+
+test("CLI run initializes a local git repo when none exists", async () => {
+  const repo = await mkdtemp(join(tmpdir(), "loop-agent-non-git-"));
+  const fakeBin = await mkdtemp(join(tmpdir(), "loop-fake-bin-"));
+  const stateDir = join(repo, ".loop");
+  const fakeCodex = join(fakeBin, "codex");
+  await writeFile(fakeCodex, [
+    "#!/usr/bin/env node",
+    "import { writeFileSync } from 'node:fs';",
+    "writeFileSync('codex-args.json', JSON.stringify(process.argv.slice(2), null, 2));"
+  ].join("\n"));
+  await chmod(fakeCodex, 0o755);
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      resolve("bin/loop.js"),
+      "run",
+      "--agent",
+      "codex",
+      "--no-interview",
+      "--state-dir",
+      stateDir,
+      "Build a darkwear luxury website MVP"
+    ],
+    {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`
+      }
+    }
+  );
+  const output = JSON.parse(result.stdout);
+  const state = JSON.parse(await readFile(output.paths.jsonPath, "utf8"));
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /initialized a local git repository/);
+  assert.equal(gitRoot(repo), realpathSync(repo));
+  assert.equal(output.agent, "codex");
+  assert.equal(state.phase, "verify");
+});
+
+test("CLI run creates a nested project boundary instead of using a parent repo", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "loop-parent-repo-"));
+  const repo = join(parent, "darkwear");
+  const fakeBin = await mkdtemp(join(tmpdir(), "loop-fake-bin-"));
+  const stateDir = join(repo, ".loop");
+  const fakeCodex = join(fakeBin, "codex");
+  await mkdir(repo);
+  await writeFile(fakeCodex, [
+    "#!/usr/bin/env node",
+    "import { writeFileSync } from 'node:fs';",
+    "writeFileSync('codex-args.json', JSON.stringify(process.argv.slice(2), null, 2));"
+  ].join("\n"));
+  await chmod(fakeCodex, 0o755);
+  git(["init", "-b", "main"], parent);
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      resolve("bin/loop.js"),
+      "run",
+      "--agent",
+      "codex",
+      "--no-interview",
+      "--state-dir",
+      stateDir,
+      "Build a darkwear luxury website MVP"
+    ],
+    {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`
+      }
+    }
+  );
+  const output = JSON.parse(result.stdout);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /initialized a local git repository/);
+  assert.equal(gitRoot(repo), realpathSync(repo));
+  assert.notEqual(gitRoot(repo), realpathSync(parent));
+  assert.equal(output.agent, "codex");
 });
 
 test("CLI run policy failure keeps exit 3 and skips wiki", async () => {

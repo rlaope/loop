@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { emitKeypressEvents } from "node:readline";
 import { createInterface } from "node:readline/promises";
 
@@ -290,6 +291,36 @@ function openTarget(target) {
   spawnSync(opener, argsForOpen, { stdio: "ignore" });
 }
 
+/** @param {string} cwd */
+function initializeGitBoundary(cwd) {
+  const result = spawnSync("git", ["init"], {
+    cwd,
+    encoding: "utf8"
+  });
+  if (result.error) {
+    throw new Error(`Loop could not initialize a local git repository in ${cwd}: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const detail = (result.stderr || result.stdout || `git exited with status ${result.status}`).trim();
+    throw new Error(`Loop could not initialize a local git repository in ${cwd}: ${detail}`);
+  }
+}
+
+/**
+ * @param {{ writeMode: boolean, expectedRoot?: string }} options
+ */
+function ensureProjectBoundary({ writeMode, expectedRoot }) {
+  if (!writeMode || expectedRoot) {
+    return;
+  }
+  const cwd = process.cwd();
+  if (existsSync(join(cwd, ".git"))) {
+    return;
+  }
+  initializeGitBoundary(cwd);
+  process.stderr.write(`Loop initialized a local git repository in ${cwd} to bound this run.\n`);
+}
+
 async function handleWikiCommand() {
   let stateDir;
   try {
@@ -546,6 +577,7 @@ async function runAgent({
   dashboardHost: host,
   dashboardPort: port
 }) {
+  ensureProjectBoundary({ writeMode, expectedRoot });
   const { state, paths } = await writeInitialRunState({ objective, stateDir, writeMode, agent });
   const gate = evaluatePolicyGate(state, {
     mode: writeMode ? "write" : "read",

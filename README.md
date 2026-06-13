@@ -89,9 +89,12 @@ Create or enter the project you want the coding agent to work on:
 ```sh
 mkdir darkwear-exhibit
 cd darkwear-exhibit
-git init -b main
 loop run "Build a darkwear luxury exhibition site"
 ```
+
+If the folder is not a git repository yet, `loop run` initializes a local git
+repository there first. That keeps write-capable agent work bounded to the
+folder you started from, even when the folder lives inside a larger parent repo.
 
 `loop run "prompt"` opens an agent picker for the prototype:
 
@@ -111,9 +114,9 @@ If you want to try Loop without installing it first:
 npm exec --yes --package github:rlaope/loop -- loop run "Build a darkwear luxury exhibition site"
 ```
 
-If Loop says the git root does not match, you are probably inside a parent git
-repository. Run `git init -b main` in the intended project folder, or run Loop
-from the parent repo root if that is the repository you want the agent to edit.
+If Loop says the git root does not match, you probably passed an explicit
+`--expected-root` that does not match the current project. Run Loop from the
+folder you want the agent to edit, or pass the intended root explicitly.
 
 If the prompt is too ambiguous for a loop, the CLI asks a short deep-interview
 style set of questions in the terminal, closes the interview, records the
