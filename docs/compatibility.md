@@ -3,11 +3,12 @@
 | Surface | MVP behavior | Notes |
 | --- | --- | --- |
 | Codex `$loop` | Shipped first. | `$loop <objective>` maps to the Codex skill in `skills/loop/SKILL.md`. |
-| Loop CLI Codex agent | Shipped first. | `loop --agent codex` launches `codex exec`; write mode requires explicit approval and isolation flags. |
+| Loop CLI Codex agent | Prototype. | `loop run --agent codex "prompt"` launches `codex exec` after Loop state and safety checks. |
+| Loop CLI Claude Code agent | Prototype. | `loop run --agent claudecode "prompt"` launches `claude --print` after Loop state and safety checks. |
 | Codex `/goal` | Interop only. | Long-running goal tracking can wrap the durable plan, but the core state remains local. |
 | Codex automations | Read-only or triage-only by default. | Write-capable automation requires durable human approval. |
 | Codex worktrees | Supported as an isolation decision. | Code-changing loops should prefer worktree or branch isolation. |
-| Claude Code namespaced `/loop` | Roadmap. | A future Claude adapter should default to a namespaced command to avoid conflicts. |
+| Claude Code namespaced `/loop` | Roadmap. | A future native Claude command should default to a namespaced command to avoid conflicts. |
 | Claude Code bare `/loop` | Explicit opt-in only. | Bare `/loop` can conflict with built-in or user-customized command behavior. |
 | Connectors/MCP | Roadmap. | Optional after local durable state and first adapter tests are stable. |
 | Issue tracker memory | Roadmap. | Local `.loop` state is the MVP baseline. |

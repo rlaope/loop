@@ -51,9 +51,10 @@ parent git root or remote.
 Dry-run mode is strict read-only. It writes durable Loop state but does not
 expose source edits.
 
-Agent mode can launch Codex through `codex exec`. Write-capable agent runs must
-call the shared policy gate before side effects; the write-mode gate requires
-durable approval, isolation, and repo-boundary preflight evidence.
+Run mode can launch Codex through `codex exec` or Claude Code through
+`claude --print`. Write-capable agent runs must call the shared policy gate
+before side effects; the write-mode gate requires durable approval, isolation,
+and repo-boundary preflight evidence.
 
 ## Human Ownership
 

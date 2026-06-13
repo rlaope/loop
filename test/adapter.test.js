@@ -50,8 +50,9 @@ test("manifest capability matches explicit CLI surfaces", async () => {
 
   assert.equal(manifest.interface.capabilities.includes("Write"), false);
   assert.match(help, /--dry-run/);
-  assert.match(help, /--agent codex/);
-  assert.match(help, /Agent write mode requires explicit approval/);
+  assert.match(help, /loop run --agent codex/);
+  assert.match(help, /loop run --agent claudecode/);
+  assert.match(help, /asks clarifying questions/);
 });
 
 test("CLI prints help and package version", async () => {
@@ -102,17 +103,13 @@ test("CLI codex agent mode runs through policy gate and records state", async ()
     process.execPath,
     [
       resolve("bin/loop.js"),
+      "run",
       "--agent",
       "codex",
-      "--write",
-      "--isolation",
-      "local",
-      "--acknowledge-local",
-      "--allow-no-remote",
-      "--objective",
-      "Build a site",
+      "--no-interview",
       "--state-dir",
-      stateDir
+      stateDir,
+      "Build a darkwear luxury website MVP"
     ],
     {
       cwd: repo,
@@ -134,6 +131,73 @@ test("CLI codex agent mode runs through policy gate and records state", async ()
   assert.equal(state.verificationEvidence.at(-1).status, "passed");
   assert.deepEqual(codexArgs.slice(0, 2), ["exec", "--sandbox"]);
   assert.ok(codexArgs.includes("workspace-write"));
+});
+
+test("CLI Claude Code agent mode invokes claude print adapter", async () => {
+  const repo = await mkdtemp(join(tmpdir(), "loop-claude-agent-repo-"));
+  const fakeBin = await mkdtemp(join(tmpdir(), "loop-fake-claude-bin-"));
+  const stateDir = join(repo, ".loop");
+  const fakeClaude = join(fakeBin, "claude");
+  await writeFile(fakeClaude, [
+    "#!/usr/bin/env node",
+    "import { writeFileSync } from 'node:fs';",
+    "writeFileSync('claude-args.json', JSON.stringify(process.argv.slice(2), null, 2));"
+  ].join("\n"));
+  await chmod(fakeClaude, 0o755);
+  git(["init", "-b", "main"], repo);
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      resolve("bin/loop.js"),
+      "run",
+      "--agent",
+      "claudecode",
+      "--no-interview",
+      "--state-dir",
+      stateDir,
+      "Build a darkwear luxury website MVP"
+    ],
+    {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`
+      }
+    }
+  );
+  const output = JSON.parse(result.stdout);
+  const state = JSON.parse(await readFile(output.paths.jsonPath, "utf8"));
+  const claudeArgs = JSON.parse(await readFile(join(repo, "claude-args.json"), "utf8"));
+
+  assert.equal(result.status, 0);
+  assert.equal(output.agent, "claudecode");
+  assert.equal(state.phase, "verify");
+  assert.equal(state.verificationEvidence.at(-1).status, "passed");
+  assert.deepEqual(claudeArgs.slice(0, 3), ["--print", "--permission-mode", "acceptEdits"]);
+});
+
+test("CLI run requires explicit agent in non-interactive mode", () => {
+  const result = spawnSync(
+    process.execPath,
+    [resolve("bin/loop.js"), "run", "--no-interview", "Build a darkwear luxury website MVP"],
+    { encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /requires --agent codex or --agent claudecode/);
+});
+
+test("CLI run requires interview for ambiguous non-interactive objectives", () => {
+  const result = spawnSync(
+    process.execPath,
+    [resolve("bin/loop.js"), "run", "--agent", "codex", "do it"],
+    { encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /ambiguous loop objective requires an interactive terminal/);
 });
 
 test("CLI rejects flags that are missing values", () => {

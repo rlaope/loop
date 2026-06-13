@@ -3,6 +3,8 @@
 ## 0.1.0
 
 - Add the Codex `$loop` dry-run MVP.
+- Add `loop run "prompt"` with Codex and Claude Code agent prototypes.
+- Add agent selection and ambiguity interview behavior for loop objectives.
 - Add durable local run state under `.loop/runs/`.
 - Add core budget, stop-condition, approval, isolation, and policy helpers.
 - Add a Codex plugin manifest and `$loop` skill.

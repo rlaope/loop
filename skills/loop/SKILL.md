@@ -31,14 +31,26 @@ Before changing source files:
 
 ## Local CLI
 
-Inside the Loop source checkout, use:
+To run a coding agent through the Loop CLI:
+
+```sh
+loop run "<objective>"
+loop run --agent codex "<objective>"
+loop run --agent claudecode "<objective>"
+```
+
+`loop run` records durable state, asks for an agent when one is not provided,
+asks clarifying deep-interview style questions when the objective is ambiguous,
+then launches the selected coding agent.
+
+For state-only smoke checks:
 
 ```sh
 node bin/loop.js --dry-run --objective "<objective>"
 ```
 
-The dry-run path writes `.loop/runs/*.json` and `.loop/runs/*.md` state records
-without changing source files.
+The dry-run path writes `.loop/runs/*.json` and `.loop/runs/*.md` records
+without changing source files or launching an agent.
 
 ## Component Map
 

@@ -61,15 +61,18 @@ Loop is built around six working components:
 - Repo-boundary and isolation preflight helpers for code-changing work.
 - A Codex plugin manifest and `$loop` skill.
 - A dry-run CLI path that writes state without changing source files.
-- A Codex CLI adapter that can hand an objective to `codex exec` with explicit
-  write approval and isolation checks.
+- A `loop run` command that can hand an objective to Codex or Claude Code after
+  agent selection and optional goal clarification.
 
 ## Quickstart
 
 Run the latest GitHub version without cloning the repository:
 
 ```sh
-npm exec --yes --package github:rlaope/loop -- loop --dry-run --objective "Build a darkwear luxury exhibition site"
+mkdir darkwear-exhibit
+cd darkwear-exhibit
+git init
+npm exec --yes --package github:rlaope/loop -- loop run --agent codex "Build a darkwear luxury exhibition site"
 ```
 
 Or install the GitHub package globally:
@@ -78,24 +81,31 @@ Or install the GitHub package globally:
 npm install -g github:rlaope/loop
 loop --help
 loop --version
-loop --dry-run --objective "Build a darkwear luxury exhibition site"
+loop run "Build a darkwear luxury exhibition site"
 ```
 
-The command writes a durable state record under `.loop/runs/` and updates the
-latest-run index.
+`loop run "prompt"` opens an agent picker for the prototype:
 
-Dry-run mode is intentionally read-only. To hand the objective to Codex and let
-it work in the current repository, run from the repository root:
+- `codex`
+- `claudecode`
+
+You can skip the picker by passing the agent explicitly:
 
 ```sh
 git init
-loop --agent codex --write --isolation local --acknowledge-local --allow-no-remote --objective "Build a darkwear luxury exhibition site"
+loop run --agent codex "Build a darkwear luxury exhibition site"
+loop run --agent claudecode "Build a darkwear luxury exhibition site"
 ```
 
-That command records Loop state, checks the repository boundary, then launches
-`codex exec` with a workspace-write sandbox. Use `--isolation branch` or
-`--isolation worktree` when you are running inside an isolated branch or
-worktree.
+If the prompt is too ambiguous for a loop, the CLI asks a short deep-interview
+style set of questions in the terminal, closes the interview, records the
+clarified objective, and then starts the selected coding agent.
+
+Dry-run mode is still available when you only want durable state:
+
+```sh
+loop --dry-run --objective "Build a darkwear luxury exhibition site"
+```
 
 To verify the package:
 
@@ -109,6 +119,7 @@ npm run typecheck
 After the package is published to npm, the shorter registry form will be:
 
 ```sh
+npx @rlaope/loop run --agent codex "Build a darkwear luxury exhibition site"
 npx @rlaope/loop --dry-run --objective "Build a darkwear luxury exhibition site"
 npm install -g @rlaope/loop
 ```

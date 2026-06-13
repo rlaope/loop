@@ -1,16 +1,28 @@
 # Roadmap
 
-This roadmap keeps the first release honest: the MVP ships a Codex-native,
-strict dry-run loop surface, while write-capable automation and cross-agent
-parity remain future work.
+This roadmap keeps the first release honest: the MVP ships durable Loop state,
+dry-run safety checks, and a prototype `loop run` surface for Codex and Claude
+Code. Rich automation, native command adapters, and long-term knowledge storage
+remain future work.
 
 ## Claude Code Adapter
 
-- Add a `/loop` command surface that mirrors the Codex `$loop` lifecycle.
+- Harden the `loop run --agent claudecode` prototype with parity tests against
+  real Claude Code behavior.
+- Add a native `/loop` command surface that mirrors the Codex `$loop` lifecycle.
 - Keep the same durable run-state schema so Codex and Claude runs can be
   compared without translation.
 - Require explicit write approval and workspace isolation before enabling any
   non-dry-run behavior.
+
+## Knowledge Store
+
+- Accumulate human-readable run summaries, decisions, blockers, and evidence
+  into a future knowledge store.
+- Shape the store like an LLM-readable project wiki so humans can inspect work
+  without reading raw chat transcripts.
+- Keep `.loop/runs/*.json` and `.loop/runs/*.md` as the append-only baseline
+  until richer sync targets exist.
 
 ## Plugins And Connectors
 
@@ -28,8 +40,8 @@ parity remain future work.
 
 ## Release Criteria
 
-- The Codex MVP remains the only supported runtime until adapter parity tests
-  exist for another agent.
+- Codex and Claude Code run prototypes stay explicit until adapter parity tests
+  cover both real CLIs.
 - A write-capable loop must fail closed on unknown policy modes, missing
   approvals, unsafe worktree state, missing repo-boundary evidence, and
   exhausted budgets.

@@ -10,7 +10,7 @@ can be reviewed as a sequence instead of one large root commit.
 | #3 | Project bootstrap | Node package metadata, linting, typecheck, and npm lockfile |
 | #4 | Core loop state | Run state, schema validation, durable memory, and public exports |
 | #5 | Safety gates | Budget, stop-condition, approval, isolation, and policy checks |
-| #6 | Codex adapter | `$loop` skill, plugin manifest, and strict dry-run CLI |
+| #6 | Agent adapters | `$loop` skill, plugin manifest, dry-run CLI, and `loop run` prototypes |
 | #7 | User docs | README, compatibility matrix, safety notes, and dry-run example |
 | #8 | Release gate | Test suite and validation coverage for the first release |
 | #9 | Roadmap | Claude Code adapter and connector expansion plan |
