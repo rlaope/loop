@@ -70,6 +70,8 @@ observable and bounded.
 - [Loop Engineering concept](docs/loop-engineering.md)
 - [Compatibility matrix](docs/compatibility.md)
 - [Safety model](docs/safety.md)
+- [Issue-to-commit map](docs/issues.md)
+- [Roadmap](docs/roadmap.md)
 - [Dry-run maintenance example](examples/dry-run-maintenance.md)
 
 ## Development
