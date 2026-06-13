@@ -15,6 +15,9 @@ export function printHelp(stream) {
   stream.write(`Loop Engineering toolkit\n\n`);
   stream.write(`Usage: loop --dry-run --objective "<objective>" [--state-dir .loop]\n`);
   stream.write(`\n`);
+  stream.write(`Run without cloning:\n`);
+  stream.write(`  npm exec --yes --package github:rlaope/loop -- loop --dry-run --objective "<objective>"\n`);
+  stream.write(`\n`);
   stream.write(`The MVP CLI is strict dry-run/read-only: it writes durable Loop state only.\n`);
   stream.write(`It does not perform source edits or write-capable automation.\n`);
 }

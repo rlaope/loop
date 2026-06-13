@@ -40,9 +40,17 @@ Loop is built around six working components:
 
 ## Quickstart
 
+Run the latest GitHub version without cloning the repository:
+
 ```sh
-npm install
-node bin/loop.js --dry-run --objective "Triage open maintenance work"
+npm exec --yes --package github:rlaope/loop -- loop --dry-run --objective "Build a darkwear luxury exhibition site"
+```
+
+Or install the GitHub package globally:
+
+```sh
+npm install -g github:rlaope/loop
+loop --dry-run --objective "Build a darkwear luxury exhibition site"
 ```
 
 The command writes a durable state record under `.loop/runs/` and updates the
@@ -55,9 +63,17 @@ into a later adapter surface.
 To verify the package:
 
 ```sh
+npm install
 npm test
 npm run lint
 npm run typecheck
+```
+
+After the package is published to npm, the shorter registry form will be:
+
+```sh
+npx @rlaope/loop --dry-run --objective "Build a darkwear luxury exhibition site"
+npm install -g @rlaope/loop
 ```
 
 ## Codex Usage
