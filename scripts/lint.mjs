@@ -4,9 +4,9 @@ import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-const roots = ["bin", "scripts", "src", "test"];
+const roots = [".github", "bin", "scripts", "src", "test"];
 const checkableExtensions = new Set([".js", ".mjs"]);
-const textExtensions = new Set([".js", ".mjs", ".json", ".md"]);
+const textExtensions = new Set([".js", ".mjs", ".json", ".md", ".yml", ".yaml"]);
 
 /**
  * @param {string} path

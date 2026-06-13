@@ -1,0 +1,65 @@
+name: Feature request
+description: Propose a new Loop capability, adapter, or workflow.
+title: "Feature: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Loop changes should keep the engineer in control: define the objective, evidence, budget, and stop condition.
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: What user goal should this feature help complete?
+      placeholder: Enable...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Describe the smallest useful version of the feature.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: What evidence proves this is done?
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Loop component
+      description: Which component is most affected?
+      options:
+        - Automations
+        - Worktrees
+        - Skills
+        - Plugins/connectors
+        - Sub-agents
+        - Memory
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risks and safety notes
+      description: Include write permissions, token budget, connector, or human-approval concerns.
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: This can start as a dry-run or read-only workflow.
+          required: false
+        - label: This requires write-capable automation.
+          required: false

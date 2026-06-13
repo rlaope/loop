@@ -1,6 +1,12 @@
 # Loop
 
 <p align="center">
+  <a href="https://github.com/rlaope/loop/actions/workflows/ci.yml">
+    <img src="https://github.com/rlaope/loop/actions/workflows/ci.yml/badge.svg" alt="CI">
+  </a>
+</p>
+
+<p align="center">
   <img src="assets/loop-engineering-poster.png" alt="Loop Engineering poster" width="640">
 </p>
 

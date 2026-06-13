@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Node 20
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Verify package contents
+        run: |
+          npm pack --dry-run --json | node -e '
+          let input = "";
+          process.stdin.on("data", (chunk) => input += chunk);
+          process.stdin.on("end", () => {
+            const pack = JSON.parse(input)[0];
+            const files = new Set(pack.files.map((file) => file.path));
+            const required = [
+              "README.md",
+              "LICENSE",
+              "bin/loop.js",
+              "src/index.js",
+              "skills/loop/SKILL.md",
+              ".codex-plugin/plugin.json",
+              "assets/loop-engineering-poster.png",
+              "assets/loop-engineering-components.png"
+            ];
+            const missing = required.filter((file) => !files.has(file));
+            if (missing.length > 0) {
+              console.error(`Missing package files: ${missing.join(", ")}`);
+              process.exit(1);
+            }
+          });
+          '

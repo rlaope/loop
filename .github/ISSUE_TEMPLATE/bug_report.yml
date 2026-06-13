@@ -1,0 +1,55 @@
+name: Bug report
+description: Report a reproducible problem in Loop.
+title: "Bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Loop. Please include enough detail for another agent or maintainer to reproduce the issue safely.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What went wrong?
+      placeholder: The loop did not...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: List the smallest steps that reproduce the issue.
+      placeholder: |
+        1. Run `...`
+        2. Observe `...`
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Add logs, screenshots, state files, or command output.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.1.0 or commit SHA
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety boundary
+      options:
+        - label: This report does not include secrets, tokens, or private credentials.
+          required: true
+        - label: I can reproduce this with read-only or dry-run commands.
+          required: false
