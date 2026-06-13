@@ -116,6 +116,45 @@ test("CLI prints help and package version", async () => {
   assert.equal(shortVersion.trim(), packageJson.version);
 });
 
+test("CLI accepts equals-style option values", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-cli-equals-state-"));
+  const output = execFileSync(
+    process.execPath,
+    [
+      "bin/loop.js",
+      "--dry-run",
+      "--objective=Equals style objective",
+      `--state-dir=${stateDir}`
+    ],
+    { encoding: "utf8" }
+  );
+  const parsed = JSON.parse(output);
+
+  assert.equal(parsed.ok, true);
+  assert.ok(parsed.paths.jsonPath.startsWith(stateDir));
+  assert.ok(parsed.wikiPaths.memoryPath);
+});
+
+test("CLI rejects unknown and malformed options", () => {
+  const unknown = spawnSync(
+    process.execPath,
+    ["bin/loop.js", "--dry-run", "--bogus", "--objective", "Unknown option objective"],
+    { encoding: "utf8" }
+  );
+  const booleanValue = spawnSync(
+    process.execPath,
+    ["bin/loop.js", "--dry-run=true", "--objective", "Boolean value objective"],
+    { encoding: "utf8" }
+  );
+
+  assert.equal(unknown.status, 1);
+  assert.match(unknown.stderr, /Unknown option: --bogus/);
+  assert.equal(unknown.stdout, "");
+  assert.equal(booleanValue.status, 1);
+  assert.match(booleanValue.stderr, /--dry-run does not take a value/);
+  assert.equal(booleanValue.stdout, "");
+});
+
 test("CLI reports state write failures without an uncaught stack trace", async () => {
   const tempDir = await mkdtemp(join(tmpdir(), "loop-cli-invalid-state-"));
   const fileStateDir = join(tempDir, "not-a-directory");
@@ -287,11 +326,9 @@ test("CLI prompt defaults to run mode when an agent is explicit", async () => {
     process.execPath,
     [
       resolve("bin/loop.js"),
-      "--agent",
-      "codex",
+      "--agent=codex",
       "--no-interview",
-      "--state-dir",
-      stateDir,
+      `--state-dir=${stateDir}`,
       "Build a darkwear luxury website MVP"
     ],
     {

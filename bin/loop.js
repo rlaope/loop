@@ -43,23 +43,89 @@ const flagsWithValues = new Set([
   "--port",
   "--state-dir"
 ]);
+const booleanFlags = new Set([
+  "--acknowledge-local",
+  "--allow-no-remote",
+  "--dry-run",
+  "--help",
+  "--no-interview",
+  "--read-only",
+  "--version",
+  "--wiki-dashboard",
+  "-h",
+  "-v"
+]);
+const knownFlags = new Set([...flagsWithValues, ...booleanFlags]);
+
+/** @param {string} arg */
+function parseOptionToken(arg) {
+  if (!arg.startsWith("-") || arg === "-") {
+    return null;
+  }
+  const equalsIndex = arg.indexOf("=");
+  if (equalsIndex === -1) {
+    return { name: arg, value: undefined, hasEquals: false };
+  }
+  return {
+    name: arg.slice(0, equalsIndex),
+    value: arg.slice(equalsIndex + 1),
+    hasEquals: true
+  };
+}
+
+function validateOptions() {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--") {
+      break;
+    }
+    const option = parseOptionToken(arg);
+    if (!option) {
+      continue;
+    }
+    if (!knownFlags.has(option.name)) {
+      throw new Error(`Unknown option: ${option.name}`);
+    }
+    if (flagsWithValues.has(option.name)) {
+      if (option.hasEquals) {
+        if (!option.value) {
+          throw new Error(`${option.name} requires a value`);
+        }
+        continue;
+      }
+      const value = args[index + 1];
+      if (!value || value.startsWith("-")) {
+        throw new Error(`${option.name} requires a value`);
+      }
+      index += 1;
+      continue;
+    }
+    if (option.hasEquals) {
+      throw new Error(`${option.name} does not take a value`);
+    }
+  }
+}
 
 /** @param {string} flag */
 function valueFor(flag) {
-  const index = args.indexOf(flag);
-  if (index === -1) {
-    return undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--") {
+      break;
+    }
+    if (arg === flag) {
+      return args[index + 1];
+    }
+    if (arg.startsWith(`${flag}=`)) {
+      return arg.slice(flag.length + 1);
+    }
   }
-  const value = args[index + 1];
-  if (!value || value.startsWith("-")) {
-    throw new Error(`${flag} requires a value`);
-  }
-  return value;
+  return undefined;
 }
 
 /** @param {string} flag */
 function has(flag) {
-  return args.includes(flag);
+  return args.some((arg) => arg === flag);
 }
 
 /** @param {string | undefined} value */
@@ -96,7 +162,8 @@ function positionalArgs() {
       break;
     }
     if (arg.startsWith("-")) {
-      if (flagsWithValues.has(arg)) {
+      const option = parseOptionToken(arg);
+      if (option && flagsWithValues.has(option.name) && !option.hasEquals) {
         index += 1;
       }
       continue;
@@ -743,6 +810,14 @@ if (has("--help") || has("-h")) {
 if (has("--version") || has("-v")) {
   process.stdout.write(`${packageJson.version}\n`);
   process.exit(0);
+}
+
+try {
+  validateOptions();
+} catch (error) {
+  process.stderr.write(`${errorMessage(error)}\n\n`);
+  printHelp(process.stderr);
+  process.exit(1);
 }
 
 if (command === "wiki") {
