@@ -42,7 +42,12 @@ export function checkRepoBoundary({
     const errors = [];
 
     if (expectedResolvedRoot && actualRoot !== expectedResolvedRoot) {
-      errors.push(`git root mismatch: expected ${expectedResolvedRoot}, got ${actualRoot}`);
+      errors.push([
+        `git root mismatch: expected ${expectedResolvedRoot}, got ${actualRoot}`,
+        "You are probably inside a parent git repository.",
+        `Run from the git root (${actualRoot}), run git init in the intended project folder,`,
+        `or pass --expected-root ${actualRoot} if you intentionally want the parent repository.`
+      ].join(" "));
     }
     if (expectedRemote && remote !== expectedRemote) {
       errors.push(`origin mismatch: expected ${expectedRemote}, got ${remote}`);

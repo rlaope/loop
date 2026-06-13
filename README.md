@@ -4,6 +4,9 @@
   <a href="https://github.com/rlaope/loop">
     <img src="https://img.shields.io/badge/GitHub-rlaope%2Floop-181717?logo=github&logoColor=white" alt="GitHub repository">
   </a>
+  <a href="https://github.com/rlaope/loop/stargazers">
+    <img src="https://img.shields.io/github/stars/rlaope/loop?style=social" alt="GitHub stars">
+  </a>
   <a href="https://github.com/rlaope/loop/actions/workflows/ci.yml">
     <img src="https://github.com/rlaope/loop/actions/workflows/ci.yml/badge.svg" alt="CI">
   </a>
@@ -12,6 +15,9 @@
   </a>
   <a href="#quickstart">
     <img src="https://img.shields.io/badge/npm-github%3Arlaope%2Floop-CB3837?logo=npm&logoColor=white" alt="npm install from GitHub">
+  </a>
+  <a href="https://x.com/rlaope">
+    <img src="https://img.shields.io/badge/X-%40rlaope-000000?logo=x&logoColor=white" alt="X @rlaope">
   </a>
   <img src="https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js&logoColor=white" alt="Node.js >= 20">
 </p>
@@ -71,21 +77,19 @@ Loop is built around six working components:
 
 ## Quickstart
 
-Run the latest GitHub version without cloning the repository:
+Install Loop once:
+
+```sh
+npm install -g github:rlaope/loop
+loop --version
+```
+
+Create or enter the project you want the coding agent to work on:
 
 ```sh
 mkdir darkwear-exhibit
 cd darkwear-exhibit
-git init
-npm exec --yes --package github:rlaope/loop -- loop run --agent codex "Build a darkwear luxury exhibition site"
-```
-
-Or install the GitHub package globally:
-
-```sh
-npm install -g github:rlaope/loop
-loop --help
-loop --version
+git init -b main
 loop run "Build a darkwear luxury exhibition site"
 ```
 
@@ -97,10 +101,19 @@ loop run "Build a darkwear luxury exhibition site"
 You can skip the picker by passing the agent explicitly:
 
 ```sh
-git init
 loop run --agent codex "Build a darkwear luxury exhibition site"
 loop run --agent claudecode "Build a darkwear luxury exhibition site"
 ```
+
+If you want to try Loop without installing it first:
+
+```sh
+npm exec --yes --package github:rlaope/loop -- loop run "Build a darkwear luxury exhibition site"
+```
+
+If Loop says the git root does not match, you are probably inside a parent git
+repository. Run `git init -b main` in the intended project folder, or run Loop
+from the parent repo root if that is the repository you want the agent to edit.
 
 If the prompt is too ambiguous for a loop, the CLI asks a short deep-interview
 style set of questions in the terminal, closes the interview, records the
@@ -125,7 +138,8 @@ loop wiki
 `loop wiki` starts a localhost-only dashboard for `.loop/wiki`. The markdown
 note under `.loop/wiki/user` is canonical; AI memory, index, and graph files are
 derived from it. `loop run` does not start the dashboard in non-interactive
-automation unless `--wiki-dashboard` is passed.
+automation unless `--wiki-dashboard` is passed. Most users can ignore that flag
+and open the dashboard later with `loop wiki`.
 
 To verify the package:
 
@@ -139,7 +153,7 @@ npm run typecheck
 After the package is published to npm, the shorter registry form will be:
 
 ```sh
-npx @rlaope/loop run --agent codex "Build a darkwear luxury exhibition site"
+npx @rlaope/loop run "Build a darkwear luxury exhibition site"
 npx @rlaope/loop --dry-run --objective "Build a darkwear luxury exhibition site"
 npm install -g @rlaope/loop
 ```

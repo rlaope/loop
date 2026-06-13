@@ -45,7 +45,7 @@ export function printHelp(stream) {
   stream.write(`  loop --dry-run --objective "<objective>" [--state-dir .loop]\n`);
   stream.write(`\n`);
   stream.write(`Run without cloning:\n`);
-  stream.write(`  npm exec --yes --package github:rlaope/loop -- loop run --agent codex "<objective>"\n`);
+  stream.write(`  npm exec --yes --package github:rlaope/loop -- loop run "<objective>"\n`);
   stream.write(`\n`);
   stream.write(`Options:\n`);
   stream.write(`  --help, -h       Show this help message.\n`);

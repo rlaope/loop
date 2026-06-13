@@ -43,6 +43,8 @@ test("repo boundary fails for unexpected parent root", async () => {
 
   assert.equal(result.ok, false);
   assert.match(result.errors.join("\n"), /git root mismatch/);
+  assert.match(result.errors.join("\n"), /inside a parent git repository/);
+  assert.match(result.errors.join("\n"), /run git init in the intended project folder/i);
 });
 
 test("repo boundary can validate root without an origin remote", async () => {
