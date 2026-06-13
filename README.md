@@ -1,25 +1,11 @@
 # Loop
 
 <p align="center">
-  <a href="https://github.com/rlaope/loop">
-    <img src="https://img.shields.io/badge/GitHub-rlaope%2Floop-181717?logo=github&logoColor=white" alt="GitHub repository">
-  </a>
-  <a href="https://github.com/rlaope/loop/stargazers">
-    <img src="https://img.shields.io/github/stars/rlaope/loop?style=social" alt="GitHub stars">
-  </a>
-  <a href="https://github.com/rlaope/loop/actions/workflows/ci.yml">
-    <img src="https://github.com/rlaope/loop/actions/workflows/ci.yml/badge.svg" alt="CI">
-  </a>
-  <a href="https://github.com/rlaope/loop/blob/main/LICENSE">
-    <img src="https://img.shields.io/github/license/rlaope/loop" alt="License">
-  </a>
-  <a href="#quickstart">
-    <img src="https://img.shields.io/badge/npm-github%3Arlaope%2Floop-CB3837?logo=npm&logoColor=white" alt="npm install from GitHub">
-  </a>
-  <a href="https://x.com/rlaope">
-    <img src="https://img.shields.io/badge/X-%40rlaope-000000?logo=x&logoColor=white" alt="X @rlaope">
-  </a>
-  <img src="https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js&logoColor=white" alt="Node.js >= 20">
+  <a href="https://github.com/rlaope/loop"><img src="https://img.shields.io/badge/GitHub-rlaope%2Floop-181717?logo=github&logoColor=white" alt="GitHub repository"></a>
+  <a href="https://github.com/rlaope/loop/stargazers"><img src="https://img.shields.io/github/stars/rlaope/loop?style=social" alt="GitHub stars"></a>
+  <a href="https://github.com/rlaope/loop/blob/main/LICENSE"><img src="https://img.shields.io/github/license/rlaope/loop" alt="License"></a>
+  <a href="#quickstart"><img src="https://img.shields.io/badge/npm-github%3Arlaope%2Floop-CB3837?logo=npm&logoColor=white" alt="npm install from GitHub"></a>
+  <a href="https://x.com/rlaope"><img src="https://img.shields.io/badge/X-%40rlaope-000000?logo=x&logoColor=white" alt="X @rlaope"></a>
 </p>
 
 ![Loop Engineering poster](assets/loop-engineering-poster.png)
