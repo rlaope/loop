@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/loop-engineering-poster.png" alt="Loop Engineering poster" width="640">
+</p>
+
 # Loop
 
 Loop is a safety-first Loop Engineering toolkit for coding agents.
@@ -9,6 +13,21 @@ verification, memory, and stopping rules.
 The MVP proves the shared core and Codex `$loop` adapter first. Claude Code
 `/loop`, connectors, scheduled write automation, and marketplace distribution
 are roadmap work after the core contract is stable.
+
+<p align="center">
+  <img src="assets/loop-engineering-components.png" alt="Loop Engineering components" width="640">
+</p>
+
+## Loop Engineering Components
+
+Loop is built around six working components:
+
+- Automations: repeatable read-only discovery, triage, and scheduled checks.
+- Worktrees: isolated branches or directories for code-changing work.
+- Skills: durable workflow instructions such as `$loop`.
+- Plugins/connectors: distribution and optional external context surfaces.
+- Sub-agents: delegated maker/checker or specialist lanes.
+- Memory: markdown, JSON state, or issue boards that survive one chat session.
 
 ## What Ships In The MVP
 
