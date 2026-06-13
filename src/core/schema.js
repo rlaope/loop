@@ -1,3 +1,5 @@
+import { terminalOutcomes } from "./outcomes.js";
+
 const REQUIRED_STRING_FIELDS = [
   "id",
   "objective",
@@ -20,7 +22,7 @@ const REQUIRED_BUDGET_FIELDS = [
 
 const SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const VALID_PHASES = new Set(["intake", "plan", "discover", "isolate", "act", "verify", "persist", "stop"]);
-const VALID_STATUSES = new Set(["active", "complete"]);
+const VALID_STATUSES = new Set(["active", ...terminalOutcomes]);
 
 /**
  * @param {unknown} value

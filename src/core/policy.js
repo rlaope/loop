@@ -1,6 +1,6 @@
 import { requireWriteApproval } from "./approval.js";
 import { evaluateBudget } from "./budget.js";
-import { checkIsolationDecision } from "./preflight.js";
+import { checkIsolationDecision, checkRepoBoundary } from "./preflight.js";
 import { evaluateStopCondition } from "./stop.js";
 
 /**
@@ -12,6 +12,7 @@ import { evaluateStopCondition } from "./stop.js";
  * @param {object} options
  * @param {"read" | "write"} [options.mode]
  * @param {{ mode?: string, acknowledgedRisk?: boolean }} [options.isolationDecision]
+ * @param {{ cwd?: string, expectedRoot?: string, expectedRemote?: string, allowNoRemote?: boolean }} [options.repoBoundary]
  * @param {{ estimatedTokens?: number, attempts?: number }} [options.nextActivity]
  * @param {{ passed?: boolean, failed?: boolean, requiresHumanDecision?: boolean }} [options.stop]
  * @param {Date} [options.now]
@@ -20,10 +21,20 @@ import { evaluateStopCondition } from "./stop.js";
 export function evaluatePolicyGate(state, {
   mode = "read",
   isolationDecision,
+  repoBoundary,
   nextActivity = {},
   stop = {},
   now = new Date()
 } = {}) {
+  if (mode !== "read" && mode !== "write") {
+    return {
+      ok: false,
+      outcome: "unsafe",
+      reason: `unsupported policy mode: ${String(mode)}`,
+      checks: { mode }
+    };
+  }
+
   const budget = evaluateBudget(state, {
     ...nextActivity,
     now
@@ -52,6 +63,41 @@ export function evaluatePolicyGate(state, {
     if (!isolation.ok) {
       return { ok: false, outcome: "unsafe", reason: isolation.reason, checks: { budget, stop: stopDecision, approval, isolation } };
     }
+
+    if (!repoBoundary?.expectedRoot) {
+      return {
+        ok: false,
+        outcome: "unsafe",
+        reason: "write-capable automation requires expected repo root evidence",
+        checks: { budget, stop: stopDecision, approval, isolation }
+      };
+    }
+
+    if (!repoBoundary.expectedRemote && repoBoundary.allowNoRemote !== true) {
+      return {
+        ok: false,
+        outcome: "unsafe",
+        reason: "write-capable automation requires expected remote evidence or explicit no-remote acknowledgement",
+        checks: { budget, stop: stopDecision, approval, isolation }
+      };
+    }
+
+    const boundary = checkRepoBoundary(repoBoundary);
+    if (!boundary.ok) {
+      return {
+        ok: false,
+        outcome: "unsafe",
+        reason: `repo boundary preflight failed: ${boundary.errors.join("; ")}`,
+        checks: { budget, stop: stopDecision, approval, isolation, boundary }
+      };
+    }
+
+    return {
+      ok: true,
+      outcome: "continue",
+      reason: "policy gate passed",
+      checks: { budget, stop: stopDecision, approval, isolation, boundary }
+    };
   }
 
   return {

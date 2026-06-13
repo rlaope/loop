@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -46,4 +46,34 @@ test("manifest capability matches dry-run only executable surface", async () => 
   assert.equal(manifest.interface.capabilities.includes("Write"), false);
   assert.match(help, /--dry-run/);
   assert.match(help, /strict dry-run\/read-only/);
+});
+
+test("CLI reports state write failures without an uncaught stack trace", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "loop-cli-invalid-state-"));
+  const fileStateDir = join(tempDir, "not-a-directory");
+  await writeFile(fileStateDir, "occupied");
+
+  const result = spawnSync(
+    process.execPath,
+    ["bin/loop.js", "--dry-run", "--objective", "Bad state dir", "--state-dir", fileStateDir],
+    { encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 4);
+  assert.match(result.stderr, /State write failed:/);
+  assert.doesNotMatch(result.stderr, /at async|Error:/);
+  assert.equal(result.stdout, "");
+});
+
+test("CLI rejects flags that are missing values", () => {
+  const result = spawnSync(
+    process.execPath,
+    ["bin/loop.js", "--dry-run", "--objective", "--state-dir"],
+    { encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /--objective requires a value/);
+  assert.match(result.stderr, /Usage:/);
+  assert.doesNotMatch(result.stdout, /"ok": true/);
 });

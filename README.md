@@ -12,7 +12,8 @@ are roadmap work after the core contract is stable.
 
 ## What Ships In The MVP
 
-- Durable local memory in `.loop/runs/*.json` and `.loop/runs/*.md`.
+- Durable local memory in `.loop/runs/*.json`, `.loop/runs/*.md`, and
+  `.loop/latest-runs.json`.
 - A shared run-state schema with objective, phase, budget, stop condition,
   verification evidence, approval state, and next action.
 - Budget and stop-condition helpers for bounded agent loops.
@@ -27,7 +28,8 @@ npm install
 node bin/loop.js --dry-run --objective "Triage open maintenance work"
 ```
 
-The command writes a durable state record under `.loop/runs/`.
+The command writes a durable state record under `.loop/runs/` and updates the
+latest-run index.
 
 The current CLI is strict dry-run/read-only. Source edits and write-capable
 automation are intentionally not exposed until the write policy gate is wired

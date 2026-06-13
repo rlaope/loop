@@ -5,7 +5,8 @@ Loop is published from the standalone repository at
 
 Local boundary checks for this pull request:
 
-- Git top level: `/Users/rlaope/Desktop/khope/loop`
+- Git top level: verified with `git rev-parse --show-toplevel` inside this
+  repository.
 - Default remote: `origin`
 - Remote URL: `https://github.com/rlaope/loop.git`
 - PR base branch: `main`

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { appendEvidence, createRunState, terminalOutcomes, validateRunState } from "../src/index.js";
+import { appendEvidence, createRunState, terminalOutcomes, transitionRunState, validateRunState } from "../src/index.js";
 
 test("creates a valid run state with required contract fields", () => {
   const state = createRunState({
@@ -94,6 +94,23 @@ test("records verification evidence immutably", () => {
   assert.equal(state.verificationEvidence.length, 0);
   assert.equal(updated.verificationEvidence.length, 1);
   assert.equal(updated.verificationEvidence[0].summary, "node --test passed");
+});
+
+test("records terminal outcomes in durable state", () => {
+  const state = createRunState({ objective: "Stop safely" });
+  const updated = transitionRunState(state, "blocked", {
+    nextAction: "wait for human decision",
+    now: new Date("2026-06-13T00:01:00.000Z")
+  });
+
+  assert.equal(updated.phase, "stop");
+  assert.equal(updated.status, "blocked");
+  assert.equal(updated.nextAction, "wait for human decision");
+  assert.equal(validateRunState(updated).valid, true);
+  assert.throws(() => {
+    // @ts-expect-error invalid outcome is intentionally exercised at runtime
+    transitionRunState(state, "continue");
+  }, /Unknown terminal outcome/);
 });
 
 test("documents terminal outcomes", () => {

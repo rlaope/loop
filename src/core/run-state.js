@@ -1,3 +1,5 @@
+import { isTerminalOutcome } from "./outcomes.js";
+
 const DEFAULT_BUDGET = Object.freeze({
   maxAttempts: 3,
   maxEstimatedTokens: 50000,
@@ -50,7 +52,7 @@ function assertBudgetNumber(name, value, { positive = false } = {}) {
  * @property {string} objective
  * @property {string} objectiveSlug
  * @property {string} phase
- * @property {"active" | "complete"} status
+ * @property {"active" | "complete" | "paused" | "budget_exhausted" | "unsafe" | "failed" | "blocked"} status
  * @property {LoopBudget} budget
  * @property {{ description: string }} stopCondition
  * @property {VerificationEvidence[]} verificationEvidence
@@ -152,6 +154,26 @@ export function appendEvidence(state, evidence, now = new Date()) {
         recordedAt: evidence.recordedAt ?? now.toISOString()
       }
     ],
+    updatedAt: now.toISOString()
+  };
+}
+
+/**
+ * @param {LoopRunState} state
+ * @param {"complete" | "paused" | "budget_exhausted" | "unsafe" | "failed" | "blocked"} outcome
+ * @param {{ nextAction?: string, now?: Date }} [options]
+ * @returns {LoopRunState}
+ */
+export function transitionRunState(state, outcome, { nextAction, now = new Date() } = {}) {
+  if (!isTerminalOutcome(outcome)) {
+    throw new Error(`Unknown terminal outcome: ${String(outcome)}`);
+  }
+
+  return {
+    ...state,
+    phase: "stop",
+    status: outcome,
+    nextAction: nextAction ?? `terminal outcome: ${outcome}`,
     updatedAt: now.toISOString()
   };
 }

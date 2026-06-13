@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -15,11 +15,13 @@ test("writes machine-readable state and human-readable summary", async () => {
 
   const paths = await writeRunState(state, { stateDir });
   const read = await readRunState(state.id, { stateDir });
+  const latestIndex = JSON.parse(await readFile(join(stateDir, "latest-runs.json"), "utf8"));
 
   assert.match(paths.jsonPath, /persist-memory/);
   assert.match(paths.summaryPath, /persist-memory/);
   assert.equal(read.ok, true);
   assert.equal(read.ok && read.state.objective, "Persist memory");
+  assert.equal(latestIndex["persist-memory"], state.id);
 });
 
 test("reads latest run by objective slug", async () => {
@@ -40,6 +42,27 @@ test("reads latest run by objective slug", async () => {
 
   assert.equal(latest.ok, true);
   assert.equal(latest.ok && latest.state.id, second.id);
+});
+
+test("latest-run lookup rejects invalid slugs", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-latest-slug-"));
+
+  const latest = await readLatestRunBySlug("../escape", { stateDir });
+
+  assert.equal(latest.ok, false);
+  assert.equal(!latest.ok && latest.error.kind, "invalid_slug");
+});
+
+test("latest-run lookup surfaces corrupt index state", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-latest-corrupt-index-"));
+  const state = createRunState({ objective: "Indexed objective" });
+  await writeRunState(state, { stateDir });
+  await writeFile(join(stateDir, "latest-runs.json"), "{ not json");
+
+  const latest = await readLatestRunBySlug("indexed-objective", { stateDir });
+
+  assert.equal(latest.ok, false);
+  assert.equal(!latest.ok && latest.error.kind, "corrupt_or_missing_state");
 });
 
 test("surfaces corrupt state as recoverable error", async () => {

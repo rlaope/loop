@@ -15,7 +15,14 @@ const args = process.argv.slice(2);
 /** @param {string} flag */
 function valueFor(flag) {
   const index = args.indexOf(flag);
-  return index === -1 ? undefined : args[index + 1];
+  if (index === -1) {
+    return undefined;
+  }
+  const value = args[index + 1];
+  if (!value || value.startsWith("-")) {
+    throw new Error(`${flag} requires a value`);
+  }
+  return value;
 }
 
 /** @param {string} flag */
@@ -28,7 +35,14 @@ if (has("--help") || has("-h")) {
   process.exit(0);
 }
 
-const objective = valueFor("--objective");
+let objective;
+try {
+  objective = valueFor("--objective");
+} catch (error) {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n\n`);
+  printHelp(process.stderr);
+  process.exit(1);
+}
 
 if (!objective) {
   printHelp(process.stderr);
@@ -36,9 +50,18 @@ if (!objective) {
 }
 
 if (has("--dry-run")) {
-  const stateDir = valueFor("--state-dir") ?? ".loop";
-  const expectedRoot = valueFor("--expected-root");
-  const expectedRemote = valueFor("--expected-remote");
+  let stateDir;
+  let expectedRoot;
+  let expectedRemote;
+  try {
+    stateDir = valueFor("--state-dir") ?? ".loop";
+    expectedRoot = valueFor("--expected-root");
+    expectedRemote = valueFor("--expected-remote");
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n\n`);
+    printHelp(process.stderr);
+    process.exit(1);
+  }
 
   if (expectedRoot || expectedRemote) {
     const boundary = checkRepoBoundary({
@@ -74,7 +97,14 @@ if (has("--dry-run")) {
     status: "passed",
     summary: "Dry-run recorded durable state without changing source files."
   });
-  const paths = await writeRunState(state, { stateDir });
+  let paths;
+  try {
+    paths = await writeRunState(state, { stateDir });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`State write failed: ${message}\n`);
+    process.exit(4);
+  }
 
   process.stdout.write(`${JSON.stringify({ ok: true, stateId: state.id, paths }, null, 2)}\n`);
   process.exit(0);

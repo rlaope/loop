@@ -3,7 +3,7 @@ export { evaluateBudget, recordBudgetActivity } from "./core/budget.js";
 export { hasActiveApproval, requireWriteApproval } from "./core/approval.js";
 export { checkIsolationDecision, checkRepoBoundary } from "./core/preflight.js";
 export { evaluatePolicyGate } from "./core/policy.js";
-export { appendEvidence, createRunState, slugifyObjective } from "./core/run-state.js";
+export { appendEvidence, createRunState, slugifyObjective, transitionRunState } from "./core/run-state.js";
 export { assertValidRunState, validateRunState } from "./core/schema.js";
 export { evaluateStopCondition } from "./core/stop.js";
 export { readLatestRunBySlug, readRunState, renderRunSummary, writeRunState } from "./core/state-store.js";

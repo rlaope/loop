@@ -31,4 +31,5 @@ parity remain future work.
 - The Codex MVP remains the only supported runtime until adapter parity tests
   exist for another agent.
 - A write-capable loop must fail closed on unknown policy modes, missing
-  approvals, unsafe worktree state, and exhausted budgets.
+  approvals, unsafe worktree state, missing repo-boundary evidence, and
+  exhausted budgets.

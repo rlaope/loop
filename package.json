@@ -5,6 +5,7 @@
   "type": "module",
   "license": "MIT",
   "private": false,
+  "author": "rlaope",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/rlaope/loop.git"
@@ -13,8 +14,16 @@
     "url": "https://github.com/rlaope/loop/issues"
   },
   "homepage": "https://github.com/rlaope/loop#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "loop": "./bin/loop.js"
+  },
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
   },
   "files": [
     "bin/",
@@ -24,7 +33,10 @@
     "skills/",
     "src/",
     "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
     "LICENSE",
+    "SECURITY.md",
     ".codex-plugin/"
   ],
   "scripts": {

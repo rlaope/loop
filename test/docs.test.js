@@ -9,6 +9,8 @@ test("README links the core documentation set", async () => {
     "docs/loop-engineering.md",
     "docs/compatibility.md",
     "docs/safety.md",
+    "docs/issues.md",
+    "docs/roadmap.md",
     "examples/dry-run-maintenance.md"
   ]) {
     assert.match(readme, new RegExp(link.replace("/", "\\/")));
@@ -29,4 +31,20 @@ test("safety docs include approval and budget boundaries", async () => {
   assert.match(safety, /humanApproval/);
   assert.match(safety, /Sub-agents|sub-agents/);
   assert.match(safety, /unexpected\s+parent\s+git\s+root/);
+});
+
+test("open-source docs avoid local machine paths", async () => {
+  const files = [
+    "README.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "CHANGELOG.md",
+    "docs/repo-boundary.md",
+    "docs/roadmap.md"
+  ];
+
+  for (const file of files) {
+    const text = await readFile(file, "utf8");
+    assert.doesNotMatch(text, /\/Users\/|Desktop\/khope/);
+  }
 });

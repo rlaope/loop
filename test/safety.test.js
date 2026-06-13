@@ -1,5 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtemp } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 import {
   createRunState,
@@ -9,6 +13,11 @@ import {
   recordBudgetActivity,
   requireWriteApproval
 } from "../src/index.js";
+
+/** @param {string[]} args @param {string} cwd */
+function git(args, cwd) {
+  execFileSync("git", args, { cwd, stdio: "ignore" });
+}
 
 test("nested activities consume the same run budget", () => {
   const state = createRunState({
@@ -72,6 +81,77 @@ test("policy gate composes read and write safety checks", () => {
       mode: "write",
       isolationDecision: { mode: "branch" }
     }).outcome,
+    "unsafe"
+  );
+});
+
+test("write policy requires repo-boundary preflight", async () => {
+  const repo = await mkdtemp(join(tmpdir(), "loop-policy-repo-"));
+  const noRemoteRepo = await mkdtemp(join(tmpdir(), "loop-policy-no-remote-"));
+  git(["init", "-b", "main"], repo);
+  git(["remote", "add", "origin", "https://github.com/rlaope/loop.git"], repo);
+  git(["init", "-b", "main"], noRemoteRepo);
+  const state = createRunState({
+    objective: "Approved write",
+    approvals: {
+      humanApproval: true,
+      approvalScope: ["write"],
+      approvalExpiresAt: "2026-06-14T00:00:00.000Z"
+    }
+  });
+
+  assert.equal(
+    evaluatePolicyGate(state, {
+      mode: "write",
+      isolationDecision: { mode: "branch" },
+      repoBoundary: { cwd: repo },
+      now: new Date("2026-06-13T00:00:00.000Z")
+    }).outcome,
+    "unsafe"
+  );
+  assert.equal(
+    evaluatePolicyGate(state, {
+      mode: "write",
+      isolationDecision: { mode: "branch" },
+      repoBoundary: { cwd: repo, expectedRoot: repo },
+      now: new Date("2026-06-13T00:00:00.000Z")
+    }).outcome,
+    "unsafe"
+  );
+  assert.equal(
+    evaluatePolicyGate(state, {
+      mode: "write",
+      isolationDecision: { mode: "branch" },
+      repoBoundary: {
+        cwd: repo,
+        expectedRoot: repo,
+        expectedRemote: "https://github.com/rlaope/loop.git"
+      },
+      now: new Date("2026-06-13T00:00:00.000Z")
+    }).ok,
+    true
+  );
+  assert.equal(
+    evaluatePolicyGate(state, {
+      mode: "write",
+      isolationDecision: { mode: "branch" },
+      repoBoundary: {
+        cwd: noRemoteRepo,
+        expectedRoot: noRemoteRepo,
+        allowNoRemote: true
+      },
+      now: new Date("2026-06-13T00:00:00.000Z")
+    }).ok,
+    true
+  );
+});
+
+test("policy gate fails closed for unsupported modes", () => {
+  const state = createRunState({ objective: "Unknown mode" });
+
+  assert.equal(
+    // @ts-expect-error invalid mode is intentionally exercised at runtime
+    evaluatePolicyGate(state, { mode: "delete-everything" }).outcome,
     "unsafe"
   );
 });

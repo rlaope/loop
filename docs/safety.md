@@ -8,6 +8,7 @@ Every run records:
 
 - objective
 - phase
+- status, including terminal outcomes
 - budget
 - attempts
 - stop condition
@@ -49,7 +50,8 @@ parent git root or remote.
 
 The MVP CLI is strict dry-run/read-only. It writes durable Loop state but does
 not expose source edits or write-capable automation. Future write surfaces must
-call the shared policy gate before side effects.
+call the shared policy gate before side effects; the write-mode gate requires
+durable approval, isolation, and repo-boundary preflight evidence.
 
 ## Human Ownership
 

@@ -26,7 +26,7 @@ blocked, unsafe, failed, or out of budget.
 4. Isolate: worktree, branch, or explicit local-mode acknowledgement.
 5. Act: run the selected skill, command, or bounded sub-agent work.
 6. Verify: tests, lint, typecheck, smoke checks, and reviewer evidence.
-7. Persist: state, attempt, evidence, next action, blockers.
+7. Persist: state, attempt, evidence, next action, blockers, terminal status.
 8. Stop: complete, paused, budget exhausted, unsafe, failed, or blocked.
 
 Loop does not remove the engineer. It gives the engineer a visible control
