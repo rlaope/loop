@@ -189,11 +189,13 @@ async function chooseDashboardStart() {
   const options = ["Yes", "No"];
   let selected = 0;
   const render = () => {
-    process.stdout.write(`\rStart Loop Wiki dashboard? ${options.map((option, index) => (
-      index === selected ? `[${option}]` : ` ${option} `
+    process.stdout.write(`\rDashboard ${options.map((option, index) => (
+      index === selected ? `[${index + 1}) ${option}]` : ` ${index + 1}) ${option} `
     )).join("  ")} `);
   };
   try {
+    process.stdout.write("Start Loop Wiki dashboard:\n");
+    process.stdout.write("Use arrow keys or 1/2, then Enter.\n");
     render();
     return await new Promise((resolve) => {
       /**
@@ -206,13 +208,17 @@ async function chooseDashboardStart() {
           render();
           return;
         }
-        if (key.name === "y") {
+        if (key.name === "1") {
           selected = 0;
           render();
-          cleanup(true);
           return;
         }
-        if (key.name === "n" || key.name === "escape") {
+        if (key.name === "2") {
+          selected = 1;
+          render();
+          return;
+        }
+        if (key.name === "escape") {
           selected = 1;
           render();
           cleanup(false);
@@ -526,11 +532,11 @@ function agentCommand(agent, prompt, writeMode) {
     return {
       command: "codex",
       args: [
+        "--ask-for-approval",
+        "never",
         "exec",
         "--sandbox",
         writeMode ? "workspace-write" : "read-only",
-        "--ask-for-approval",
-        "never",
         "--cd",
         process.cwd(),
         prompt

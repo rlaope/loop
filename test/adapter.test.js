@@ -176,7 +176,8 @@ test("CLI codex agent mode runs through policy gate and records state", async ()
   assert.equal(state.phase, "verify");
   assert.equal(state.approvals.humanApproval, true);
   assert.equal(state.verificationEvidence.at(-1).status, "passed");
-  assert.deepEqual(codexArgs.slice(0, 2), ["exec", "--sandbox"]);
+  assert.deepEqual(codexArgs.slice(0, 3), ["--ask-for-approval", "never", "exec"]);
+  assert.ok(codexArgs.includes("--sandbox"));
   assert.ok(codexArgs.includes("workspace-write"));
   assert.match(output.wikiPaths.notePath, /wiki\/user/);
 });
