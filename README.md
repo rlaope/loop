@@ -4,15 +4,25 @@
   <img src="assets/loop-engineering-poster.png" alt="Loop Engineering poster" width="640">
 </p>
 
-Loop is a safety-first Loop Engineering toolkit for coding agents.
-
-Instead of prompting an agent every turn, define a purpose and let the loop
-drive the agent through intake, planning, discovery, isolation, action,
-verification, memory, and stopping rules.
-
-The MVP proves the shared core and Codex `$loop` adapter first. Claude Code
-`/loop`, connectors, scheduled write automation, and marketplace distribution
-are roadmap work after the core contract is stable.
+<div align="center">
+  <p><strong>Recursive goals for coding agents that need memory, budgets, and stopping rules.</strong></p>
+  <p>Loop is a safety-first Loop Engineering toolkit for coding agents.</p>
+  <p>
+    Instead of prompting an agent every turn, define a purpose and let the loop
+    drive the agent through intake, planning, discovery, isolation, action,
+    verification, memory, and stopping rules.
+  </p>
+  <p>
+    The MVP proves the shared core and Codex <code>$loop</code> adapter first.
+    Claude Code <code>/loop</code>, connectors, scheduled write automation,
+    and marketplace distribution are roadmap work after the core contract is
+    stable.
+  </p>
+  <p>
+    Built by <a href="https://github.com/rlaope">@rlaope</a> ·
+    <a href="https://rlaope.github.io/artengine-lab/">Art & Engineering</a>
+  </p>
+</div>
 
 ## Loop Engineering Components
 
