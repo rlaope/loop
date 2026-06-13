@@ -38,6 +38,7 @@ export function printHelp(stream) {
   stream.write(`Usage:\n`);
   stream.write(`  loop --help\n`);
   stream.write(`  loop --version\n`);
+  stream.write(`  loop "prompt"\n`);
   stream.write(`  loop run "prompt"\n`);
   stream.write(`  loop run --agent codex "prompt"\n`);
   stream.write(`  loop run --agent claudecode "prompt"\n`);

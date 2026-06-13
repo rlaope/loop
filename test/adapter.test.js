@@ -270,6 +270,46 @@ test("CLI run creates a nested project boundary instead of using a parent repo",
   assert.equal(output.agent, "codex");
 });
 
+test("CLI prompt defaults to run mode when an agent is explicit", async () => {
+  const repo = await mkdtemp(join(tmpdir(), "loop-default-run-repo-"));
+  const fakeBin = await mkdtemp(join(tmpdir(), "loop-fake-bin-"));
+  const stateDir = join(repo, ".loop");
+  const fakeCodex = join(fakeBin, "codex");
+  await writeFile(fakeCodex, [
+    "#!/usr/bin/env node",
+    "import { writeFileSync } from 'node:fs';",
+    "writeFileSync('codex-args.json', JSON.stringify(process.argv.slice(2), null, 2));"
+  ].join("\n"));
+  await chmod(fakeCodex, 0o755);
+  git(["init", "-b", "main"], repo);
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      resolve("bin/loop.js"),
+      "--agent",
+      "codex",
+      "--no-interview",
+      "--state-dir",
+      stateDir,
+      "Build a darkwear luxury website MVP"
+    ],
+    {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`
+      }
+    }
+  );
+  const output = JSON.parse(result.stdout);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(output.agent, "codex");
+  assert.match(output.wikiPaths.notePath, /wiki\/user/);
+});
+
 test("CLI run policy failure keeps exit 3 and skips wiki", async () => {
   const repo = await mkdtemp(join(tmpdir(), "loop-policy-fail-repo-"));
   const stateDir = join(repo, ".loop");

@@ -154,31 +154,17 @@ async function askRequired(rl, question) {
   }
 }
 
-async function chooseAgent() {
+/**
+ * @template T
+ * @param {{ title: string, options: Array<{ label: string, value: T }>, escapeIndex?: number }} config
+ * @returns {Promise<T>}
+ */
+async function chooseWithArrows({ title, options, escapeIndex = 0 }) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    throw new Error("loop run requires --agent codex or --agent claudecode in non-interactive mode");
+    throw new Error(`${title} requires an interactive terminal`);
   }
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    process.stdout.write("Select coding agent:\n");
-    process.stdout.write("  1) codex\n");
-    process.stdout.write("  2) claudecode\n");
-    const answer = (await rl.question("Agent [codex]: ")).trim().toLowerCase();
-    if (!answer || answer === "1" || answer === "codex") {
-      return "codex";
-    }
-    if (answer === "2" || answer === "claude" || answer === "claudecode") {
-      return "claudecode";
-    }
-    throw new Error(`Unsupported agent selection: ${answer}`);
-  } finally {
-    rl.close();
-  }
-}
-
-async function chooseDashboardStart() {
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    return false;
+  if (options.length === 0) {
+    throw new Error(`${title} has no options`);
   }
   emitKeypressEvents(process.stdin);
   const previousRawMode = process.stdin.isRaw;
@@ -186,16 +172,21 @@ async function chooseDashboardStart() {
     process.stdin.setRawMode(true);
   }
   process.stdin.resume();
-  const options = ["Yes", "No"];
   let selected = 0;
+  let renderedLines = 0;
   const render = () => {
-    process.stdout.write(`\rDashboard ${options.map((option, index) => (
-      index === selected ? `[${index + 1}) ${option}]` : ` ${index + 1}) ${option} `
-    )).join("  ")} `);
+    if (renderedLines > 0) {
+      process.stdout.write(`\x1b[${renderedLines}F\x1b[J`);
+    }
+    const lines = [
+      title,
+      "Use arrow keys, then Enter.",
+      ...options.map((option, index) => `${index === selected ? "> " : "  "}${index + 1}) ${option.label}`)
+    ];
+    process.stdout.write(`${lines.join("\n")}\n`);
+    renderedLines = lines.length;
   };
   try {
-    process.stdout.write("Start Loop Wiki dashboard:\n");
-    process.stdout.write("Use arrow keys or 1/2, then Enter.\n");
     render();
     return await new Promise((resolve) => {
       /**
@@ -203,35 +194,27 @@ async function chooseDashboardStart() {
        * @param {{ name?: string }} key
        */
       const onKeypress = (_str, key) => {
-        if (key.name === "left" || key.name === "right" || key.name === "tab") {
-          selected = selected === 0 ? 1 : 0;
+        if (key.name === "up" || key.name === "left") {
+          selected = selected === 0 ? options.length - 1 : selected - 1;
           render();
           return;
         }
-        if (key.name === "1") {
-          selected = 0;
-          render();
-          return;
-        }
-        if (key.name === "2") {
-          selected = 1;
+        if (key.name === "down" || key.name === "right" || key.name === "tab") {
+          selected = selected === options.length - 1 ? 0 : selected + 1;
           render();
           return;
         }
         if (key.name === "escape") {
-          selected = 1;
-          render();
-          cleanup(false);
+          cleanup(options[escapeIndex]?.value ?? options[0].value);
           return;
         }
         if (key.name === "return" || key.name === "enter") {
-          cleanup(selected === 0);
+          cleanup(options[selected].value);
         }
       };
-      /** @param {boolean} value */
+      /** @param {T} value */
       const cleanup = (value) => {
         process.stdin.off("keypress", onKeypress);
-        process.stdout.write("\n");
         resolve(value);
       };
       process.stdin.on("keypress", onKeypress);
@@ -242,6 +225,39 @@ async function chooseDashboardStart() {
     }
     process.stdin.pause();
   }
+}
+
+/** @returns {Promise<"codex" | "claudecode">} */
+async function chooseAgent() {
+  try {
+    const selectedAgent = await chooseWithArrows({
+      title: "Select coding agent:",
+      options: [
+        { label: "codex", value: "codex" },
+        { label: "claudecode", value: "claudecode" }
+      ]
+    });
+    return selectedAgent === "codex" ? "codex" : "claudecode";
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("requires an interactive terminal")) {
+      throw new Error("loop run requires --agent codex or --agent claudecode in non-interactive mode");
+    }
+    throw error;
+  }
+}
+
+async function chooseDashboardStart() {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    return false;
+  }
+  return chooseWithArrows({
+    title: "Start Loop Wiki dashboard:",
+    escapeIndex: 1,
+    options: [
+      { label: "Yes", value: true },
+      { label: "No", value: false }
+    ]
+  });
 }
 
 /** @param {string} objective */
@@ -715,6 +731,8 @@ if (!objective) {
   process.exit(1);
 }
 
+const isRunMode = command === "run" || has("--agent") || !command;
+
 if (has("--dry-run")) {
   let expectedRoot;
   let expectedRemote;
@@ -775,7 +793,7 @@ if (has("--dry-run")) {
   process.exit(0);
 }
 
-if (command === "run" || has("--agent")) {
+if (isRunMode) {
   let resolvedAgent;
   let expectedRoot;
   let expectedRemote;
@@ -811,9 +829,9 @@ if (command === "run" || has("--agent")) {
     writeMode: !has("--read-only"),
     expectedRoot,
     expectedRemote,
-    allowNoRemote: has("--allow-no-remote") || command === "run",
+    allowNoRemote: has("--allow-no-remote") || isRunMode,
     isolationMode,
-    acknowledgeLocal: has("--acknowledge-local") || command === "run",
+    acknowledgeLocal: has("--acknowledge-local") || isRunMode,
     wikiDashboard: has("--wiki-dashboard"),
     dashboardHost: host,
     dashboardPort: port

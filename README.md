@@ -75,14 +75,15 @@ Create or enter the project you want the coding agent to work on:
 ```sh
 mkdir darkwear-exhibit
 cd darkwear-exhibit
-loop run "Build a darkwear luxury exhibition site"
+loop "Build a darkwear luxury exhibition site"
 ```
 
 If the folder is not a git repository yet, `loop run` initializes a local git
 repository there first. That keeps write-capable agent work bounded to the
 folder you started from, even when the folder lives inside a larger parent repo.
 
-`loop run "prompt"` opens an agent picker for the prototype:
+`loop "prompt"` opens an arrow-key agent picker for the prototype. The explicit
+form is `loop run "prompt"`.
 
 - `codex`
 - `claudecode`
@@ -97,7 +98,7 @@ loop run --agent claudecode "Build a darkwear luxury exhibition site"
 If you want to try Loop without installing it first:
 
 ```sh
-npm exec --yes --package github:rlaope/loop -- loop run "Build a darkwear luxury exhibition site"
+npm exec --yes --package github:rlaope/loop -- loop "Build a darkwear luxury exhibition site"
 ```
 
 If Loop says the git root does not match, you probably passed an explicit
@@ -142,6 +143,7 @@ npm run typecheck
 After the package is published to npm, the shorter registry form will be:
 
 ```sh
+npx @rlaope/loop "Build a darkwear luxury exhibition site"
 npx @rlaope/loop run "Build a darkwear luxury exhibition site"
 npx @rlaope/loop --dry-run --objective "Build a darkwear luxury exhibition site"
 npm install -g @rlaope/loop
