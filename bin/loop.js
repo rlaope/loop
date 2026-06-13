@@ -168,6 +168,17 @@ async function chooseWithArrows({ title, options, escapeIndex = 0 }) {
   }
   emitKeypressEvents(process.stdin);
   const previousRawMode = process.stdin.isRaw;
+  let inputRestored = false;
+  const restoreInput = () => {
+    if (inputRestored) {
+      return;
+    }
+    if (typeof process.stdin.setRawMode === "function") {
+      process.stdin.setRawMode(Boolean(previousRawMode));
+    }
+    process.stdin.pause();
+    inputRestored = true;
+  };
   if (typeof process.stdin.setRawMode === "function") {
     process.stdin.setRawMode(true);
   }
@@ -195,10 +206,14 @@ async function chooseWithArrows({ title, options, escapeIndex = 0 }) {
     return await new Promise((resolve) => {
       /**
        * @param {string} _str
-       * @param {{ name?: string, sequence?: string }} key
+       * @param {{ name?: string, sequence?: string, ctrl?: boolean }} key
        */
       const onKeypress = (_str, key) => {
         const sequence = key.sequence ?? _str;
+        if ((key.ctrl === true && key.name === "c") || sequence === "\u0003") {
+          cancel();
+          return;
+        }
         if (key.name === "up" || key.name === "left") {
           selected = selected === 0 ? options.length - 1 : selected - 1;
           render();
@@ -231,13 +246,18 @@ async function chooseWithArrows({ title, options, escapeIndex = 0 }) {
         renderedLines = 0;
         resolve(value);
       };
+      const cancel = () => {
+        process.stdin.off("keypress", onKeypress);
+        clearRenderedLines(renderedLines);
+        process.stdout.write(`${title} cancelled\n`);
+        renderedLines = 0;
+        restoreInput();
+        process.exit(130);
+      };
       process.stdin.on("keypress", onKeypress);
     });
   } finally {
-    if (typeof process.stdin.setRawMode === "function") {
-      process.stdin.setRawMode(Boolean(previousRawMode));
-    }
-    process.stdin.pause();
+    restoreInput();
   }
 }
 

@@ -78,7 +78,7 @@ cd darkwear-exhibit
 loop "Build a darkwear luxury exhibition site"
 ```
 
-If the folder is not a git repository yet, `loop run` initializes a local git
+If the folder is not a git repository yet, `loop` initializes a local git
 repository there first. That keeps write-capable agent work bounded to the
 folder you started from, even when the folder lives inside a larger parent repo.
 
