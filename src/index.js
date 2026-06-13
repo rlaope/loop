@@ -7,6 +7,28 @@ export { appendEvidence, createRunState, slugifyObjective, transitionRunState } 
 export { assertValidRunState, validateRunState } from "./core/schema.js";
 export { evaluateStopCondition } from "./core/stop.js";
 export { readLatestRunBySlug, readRunState, renderRunSummary, writeRunState } from "./core/state-store.js";
+export {
+  listWikiNotes,
+  noteIdForRunState,
+  readWikiIndex,
+  readWikiNote,
+  renderWikiList,
+  renderWikiNote,
+  wikiNotePath,
+  writeWikiForRunState
+} from "./core/wiki-store.js";
+export {
+  DEFAULT_WIKI_HOST,
+  DEFAULT_WIKI_PORT,
+  WIKI_FAILURE_EXIT_CODE,
+  assertWikiDashboardHost,
+  dashboardActionForRun,
+  dashboardUrl,
+  getDashboardStatus,
+  serveWikiDashboard,
+  startDetachedWikiDashboard,
+  waitForDashboardReady
+} from "./core/wiki-dashboard.js";
 
 export const packageName = "@rlaope/loop";
 
@@ -19,6 +41,7 @@ export function printHelp(stream) {
   stream.write(`  loop run "prompt"\n`);
   stream.write(`  loop run --agent codex "prompt"\n`);
   stream.write(`  loop run --agent claudecode "prompt"\n`);
+  stream.write(`  loop wiki [list|read <id>|open <id>|serve]\n`);
   stream.write(`  loop --dry-run --objective "<objective>" [--state-dir .loop]\n`);
   stream.write(`\n`);
   stream.write(`Run without cloning:\n`);
@@ -32,6 +55,8 @@ export function printHelp(stream) {
   stream.write(`  --read-only      Run the selected agent without write permissions.\n`);
   stream.write(`  --objective      Objective for the Loop run.\n`);
   stream.write(`  --state-dir      Directory for durable Loop state. Defaults to .loop.\n`);
+  stream.write(`  --wiki-dashboard  Start the local Loop Wiki dashboard for non-interactive run mode.\n`);
+  stream.write(`  --port           Port for Loop Wiki dashboard. Defaults to 3846.\n`);
   stream.write(`  --isolation      Write isolation mode: branch, worktree, or local.\n`);
   stream.write(`  --acknowledge-local  Explicitly acknowledge local-mode write risk.\n`);
   stream.write(`  --expected-root  Expected git root for write-capable runs. Defaults to cwd.\n`);
@@ -39,6 +64,7 @@ export function printHelp(stream) {
   stream.write(`  --allow-no-remote  Allow write-capable runs in a local repo with no origin.\n`);
   stream.write(`  --no-interview   Skip ambiguity interview for automation or tests.\n`);
   stream.write(`\n`);
-  stream.write(`Dry-run mode writes durable Loop state only.\n`);
+  stream.write(`Dry-run mode writes durable Loop state and local wiki artifacts only.\n`);
   stream.write(`Run mode records state, asks clarifying questions when needed, then launches the selected agent.\n`);
+  stream.write(`Wiki mode reads local .loop/wiki notes and serves a localhost dashboard.\n`);
 }

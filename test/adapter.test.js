@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -37,6 +37,47 @@ test("CLI dry-run writes durable state without source edits", async () => {
   assert.equal(parsed.ok, true);
   assert.equal(state.objective, "Dry maintenance");
   assert.equal(state.verificationEvidence[0].status, "passed");
+  assert.match(parsed.wikiPaths.notePath, /wiki\/user/);
+});
+
+test("CLI wiki list and read expose dry-run notes", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-cli-wiki-state-"));
+  const output = execFileSync(
+    process.execPath,
+    ["bin/loop.js", "--dry-run", "--objective", "Wiki maintenance", "--state-dir", stateDir],
+    { encoding: "utf8" }
+  );
+  const parsed = JSON.parse(output);
+  const list = execFileSync(
+    process.execPath,
+    ["bin/loop.js", "wiki", "list", "--state-dir", stateDir, "--host", "0.0.0.0", "--port", "not-a-port"],
+    { encoding: "utf8" }
+  );
+  const read = execFileSync(
+    process.execPath,
+    ["bin/loop.js", "wiki", "read", parsed.wikiPaths.id, "--state-dir", stateDir],
+    { encoding: "utf8" }
+  );
+
+  assert.match(list, new RegExp(parsed.wikiPaths.id));
+  assert.match(read, /# Wiki maintenance/);
+  assert.match(read, /## Token Usage/);
+});
+
+test("CLI dry-run reports wiki failure after durable state write", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-cli-wiki-fail-"));
+  await writeFile(join(stateDir, "wiki"), "occupied");
+
+  const result = spawnSync(
+    process.execPath,
+    ["bin/loop.js", "--dry-run", "--objective", "Wiki failure", "--state-dir", stateDir],
+    { encoding: "utf8" }
+  );
+  const runFiles = await readdir(join(stateDir, "runs"));
+
+  assert.equal(result.status, 6);
+  assert.match(result.stderr, /Wiki write failed after durable state write/);
+  assert.ok(runFiles.some((file) => file.endsWith(".json")));
 });
 
 /** @param {string[]} args @param {string} cwd */
@@ -131,6 +172,121 @@ test("CLI codex agent mode runs through policy gate and records state", async ()
   assert.equal(state.verificationEvidence.at(-1).status, "passed");
   assert.deepEqual(codexArgs.slice(0, 2), ["exec", "--sandbox"]);
   assert.ok(codexArgs.includes("workspace-write"));
+  assert.match(output.wikiPaths.notePath, /wiki\/user/);
+});
+
+test("CLI run policy failure keeps exit 3 and skips wiki", async () => {
+  const repo = await mkdtemp(join(tmpdir(), "loop-policy-fail-repo-"));
+  const stateDir = join(repo, ".loop");
+  git(["init", "-b", "main"], repo);
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      resolve("bin/loop.js"),
+      "run",
+      "--agent",
+      "codex",
+      "--no-interview",
+      "--state-dir",
+      stateDir,
+      "--expected-root",
+      join(repo, "elsewhere"),
+      "Build a darkwear luxury website MVP"
+    ],
+    { cwd: repo, encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 3);
+  assert.match(result.stderr, /Policy gate failed:/);
+  await assert.rejects(() => readdir(join(stateDir, "wiki")), /ENOENT/);
+});
+
+test("CLI run stops before agent when initial wiki write fails", async () => {
+  const repo = await mkdtemp(join(tmpdir(), "loop-initial-wiki-fail-repo-"));
+  const fakeBin = await mkdtemp(join(tmpdir(), "loop-fake-bin-"));
+  const stateDir = join(repo, ".loop");
+  const fakeCodex = join(fakeBin, "codex");
+  await writeFile(fakeCodex, [
+    "#!/usr/bin/env node",
+    "import { writeFileSync } from 'node:fs';",
+    "writeFileSync('agent-ran', 'yes');"
+  ].join("\n"));
+  await chmod(fakeCodex, 0o755);
+  git(["init", "-b", "main"], repo);
+  await mkdir(stateDir);
+  await writeFile(join(stateDir, "wiki"), "occupied");
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      resolve("bin/loop.js"),
+      "run",
+      "--agent",
+      "codex",
+      "--no-interview",
+      "--state-dir",
+      stateDir,
+      "Build a darkwear luxury website MVP"
+    ],
+    {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`
+      }
+    }
+  );
+
+  assert.equal(result.status, 6);
+  assert.match(result.stderr, /Wiki write failed after durable state write/);
+  await assert.rejects(() => readFile(join(repo, "agent-ran"), "utf8"), /ENOENT/);
+});
+
+test("CLI run reports final wiki failure after agent output", async () => {
+  const repo = await mkdtemp(join(tmpdir(), "loop-final-wiki-fail-repo-"));
+  const fakeBin = await mkdtemp(join(tmpdir(), "loop-fake-bin-"));
+  const stateDir = join(repo, ".loop");
+  const fakeCodex = join(fakeBin, "codex");
+  await writeFile(fakeCodex, [
+    "#!/usr/bin/env node",
+    "import { rmSync, writeFileSync } from 'node:fs';",
+    "console.log('agent completed');",
+    "rmSync('.loop/wiki', { recursive: true, force: true });",
+    "writeFileSync('.loop/wiki', 'occupied');"
+  ].join("\n"));
+  await chmod(fakeCodex, 0o755);
+  git(["init", "-b", "main"], repo);
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      resolve("bin/loop.js"),
+      "run",
+      "--agent",
+      "codex",
+      "--no-interview",
+      "--state-dir",
+      stateDir,
+      "Build a darkwear luxury website MVP"
+    ],
+    {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`
+      }
+    }
+  );
+  const runFiles = await readdir(join(stateDir, "runs"));
+  await rm(join(stateDir, "wiki"), { force: true });
+
+  assert.equal(result.status, 6);
+  assert.match(result.stdout, /agent completed/);
+  assert.match(result.stderr, /Wiki write failed after durable state write/);
+  assert.ok(runFiles.some((file) => file.endsWith(".json")));
 });
 
 test("CLI Claude Code agent mode invokes claude print adapter", async () => {

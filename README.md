@@ -55,6 +55,9 @@ Loop is built around six working components:
 
 - Durable local memory in `.loop/runs/*.json`, `.loop/runs/*.md`, and
   `.loop/latest-runs.json`.
+- Loop Wiki second-brain storage in `.loop/wiki/user/*.md`,
+  `.loop/wiki/ai/*.json`, `.loop/wiki/index.json`, and
+  `.loop/wiki/graph.json`.
 - A shared run-state schema with objective, phase, budget, stop condition,
   verification evidence, approval state, and next action.
 - Budget and stop-condition helpers for bounded agent loops.
@@ -63,6 +66,8 @@ Loop is built around six working components:
 - A dry-run CLI path that writes state without changing source files.
 - A `loop run` command that can hand an objective to Codex or Claude Code after
   agent selection and optional goal clarification.
+- `loop wiki` commands for listing, reading, opening, and serving local
+  human-readable run notes.
 
 ## Quickstart
 
@@ -101,11 +106,26 @@ If the prompt is too ambiguous for a loop, the CLI asks a short deep-interview
 style set of questions in the terminal, closes the interview, records the
 clarified objective, and then starts the selected coding agent.
 
-Dry-run mode is still available when you only want durable state:
+Dry-run mode is still available when you only want durable state and a wiki
+note without source edits:
 
 ```sh
 loop --dry-run --objective "Build a darkwear luxury exhibition site"
 ```
+
+Read the generated second-brain notes locally:
+
+```sh
+loop wiki list
+loop wiki read <note-id>
+loop wiki open <note-id>
+loop wiki
+```
+
+`loop wiki` starts a localhost-only dashboard for `.loop/wiki`. The markdown
+note under `.loop/wiki/user` is canonical; AI memory, index, and graph files are
+derived from it. `loop run` does not start the dashboard in non-interactive
+automation unless `--wiki-dashboard` is passed.
 
 To verify the package:
 
