@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { readFileSync } from "node:fs";
+
 import {
   appendEvidence,
   checkRepoBoundary,
@@ -11,6 +13,7 @@ import {
 } from "../src/index.js";
 
 const args = process.argv.slice(2);
+const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
 /** @param {string} flag */
 function valueFor(flag) {
@@ -32,6 +35,11 @@ function has(flag) {
 
 if (has("--help") || has("-h")) {
   printHelp(process.stdout);
+  process.exit(0);
+}
+
+if (has("--version") || has("-v")) {
+  process.stdout.write(`${packageJson.version}\n`);
   process.exit(0);
 }
 

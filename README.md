@@ -74,6 +74,8 @@ Or install the GitHub package globally:
 
 ```sh
 npm install -g github:rlaope/loop
+loop --help
+loop --version
 loop --dry-run --objective "Build a darkwear luxury exhibition site"
 ```
 

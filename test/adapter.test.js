@@ -48,6 +48,20 @@ test("manifest capability matches dry-run only executable surface", async () => 
   assert.match(help, /strict dry-run\/read-only/);
 });
 
+test("CLI prints help and package version", async () => {
+  const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+  const help = execFileSync(process.execPath, ["bin/loop.js", "--help"], { encoding: "utf8" });
+  const shortHelp = execFileSync(process.execPath, ["bin/loop.js", "-h"], { encoding: "utf8" });
+  const version = execFileSync(process.execPath, ["bin/loop.js", "--version"], { encoding: "utf8" });
+  const shortVersion = execFileSync(process.execPath, ["bin/loop.js", "-v"], { encoding: "utf8" });
+
+  assert.match(help, /Usage:/);
+  assert.match(help, /--version/);
+  assert.match(shortHelp, /Usage:/);
+  assert.equal(version.trim(), packageJson.version);
+  assert.equal(shortVersion.trim(), packageJson.version);
+});
+
 test("CLI reports state write failures without an uncaught stack trace", async () => {
   const tempDir = await mkdtemp(join(tmpdir(), "loop-cli-invalid-state-"));
   const fileStateDir = join(tempDir, "not-a-directory");
