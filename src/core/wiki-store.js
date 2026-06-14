@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 
 const DEFAULT_STATE_DIR = ".loop";
@@ -11,7 +11,8 @@ const GRAPH_FILE = "graph.json";
  * @typedef {{ input: number | null, output: number | null, total: number | null, source: "agent-reported" | "estimated" | "unknown" }} WikiTokenUsage
  * @typedef {{ target: string, relationship: string, reason: string }} WikiLink
  * @typedef {{ jsonPath?: string, summaryPath?: string }} WikiRunPaths
- * @typedef {{ id: string, title: string, objective: string, objectiveSlug: string, status: string, phase: string, canonicalNote: string, aiMemory: string, createdAt: string, updatedAt: string, summary: string, tags: string[], links: WikiLink[], tokens: WikiTokenUsage }} WikiIndexEntry
+ * @typedef {{ agent?: string, status?: string, pid?: number | null, startedAt?: string, endedAt?: string | null, logPath?: string }} WikiSession
+ * @typedef {{ id: string, runId?: string, title: string, objective: string, objectiveSlug: string, status: string, phase: string, canonicalNote: string, aiMemory: string, createdAt: string, updatedAt: string, summary: string, tags: string[], links: WikiLink[], tokens: WikiTokenUsage, session?: WikiSession | null }} WikiIndexEntry
  * @typedef {{ version: 1, updatedAt: string, notes: WikiIndexEntry[] }} WikiIndex
  */
 
@@ -184,6 +185,7 @@ export async function readWikiIndex({ stateDir = DEFAULT_STATE_DIR } = {}) {
       updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date(0).toISOString(),
       notes: parsed.notes.filter(isRecord).map((entry) => ({
         id: String(entry.id ?? ""),
+        runId: typeof entry.runId === "string" ? entry.runId : undefined,
         title: String(entry.title ?? ""),
         objective: String(entry.objective ?? ""),
         objectiveSlug: String(entry.objectiveSlug ?? ""),
@@ -202,7 +204,8 @@ export async function readWikiIndex({ stateDir = DEFAULT_STATE_DIR } = {}) {
               reason: String(link.reason ?? "")
             }))
           : [],
-        tokens: normalizeTokens(entry.tokens)
+        tokens: normalizeTokens(entry.tokens),
+        session: normalizeSession(entry.session)
       })).filter((entry) => SAFE_ID_PATTERN.test(entry.id))
     };
   } catch (error) {
@@ -240,6 +243,50 @@ function unknownTokenUsage() {
     total: null,
     source: "unknown"
   };
+}
+
+/**
+ * @param {unknown} value
+ * @returns {WikiSession | null}
+ */
+function normalizeSession(value) {
+  if (!isRecord(value)) {
+    return null;
+  }
+  return {
+    agent: typeof value.agent === "string" ? value.agent : undefined,
+    status: typeof value.status === "string" ? value.status : undefined,
+    pid: typeof value.pid === "number" ? value.pid : null,
+    startedAt: typeof value.startedAt === "string" ? value.startedAt : undefined,
+    endedAt: typeof value.endedAt === "string" ? value.endedAt : null,
+    logPath: typeof value.logPath === "string" ? value.logPath : undefined
+  };
+}
+
+/**
+ * @param {unknown} state
+ * @returns {WikiSession | null}
+ */
+function sessionFromRunState(state) {
+  return isRecord(state) ? normalizeSession(state.session) : null;
+}
+
+/** @param {WikiSession | null | undefined} session */
+function sessionLabel(session) {
+  if (!session) {
+    return "not recorded";
+  }
+  const agent = session.agent ?? "agent";
+  if (session.status === "running") {
+    return `${agent} running${session.pid ? ` · pid ${session.pid}` : ""}`;
+  }
+  if (session.status === "exited") {
+    return `${agent} exited`;
+  }
+  if (session.status === "failed_to_start") {
+    return `${agent} failed to start`;
+  }
+  return `${agent} ${session.status ?? "session recorded"}`;
 }
 
 /**
@@ -336,6 +383,7 @@ function relatedLinks(index, state, id) {
  * @param {{ id: string, links: WikiLink[], paths?: WikiRunPaths }} options
  */
 export function renderWikiNote(state, { id, links, paths = {} }) {
+  const session = sessionFromRunState(state);
   const evidence = state.verificationEvidence.length === 0
     ? "- pending: No verification evidence has been recorded yet."
     : state.verificationEvidence.map((entry) => `- ${entry.status}: ${entry.summary}`).join("\n");
@@ -355,6 +403,8 @@ export function renderWikiNote(state, { id, links, paths = {} }) {
     ["Objective slug", state.objectiveSlug],
     ["Phase", state.phase],
     ["Status", state.status],
+    ["Agent session", sessionLabel(session)],
+    ["Agent log", session?.logPath ?? "Not recorded."],
     ["State JSON", paths.jsonPath ?? "Not provided."],
     ["Run summary", paths.summaryPath ?? "Not provided."]
   ];
@@ -385,6 +435,8 @@ export function renderWikiNote(state, { id, links, paths = {} }) {
     "## Work / Change Summary",
     "",
     statusSummary(state),
+    "",
+    `Agent session: ${sessionLabel(session)}.`,
     "",
     "## Technical Spec",
     "",
@@ -444,6 +496,7 @@ function shortSummaryFromMarkdown(markdown) {
 function buildAiMemory(state, { id, noteRelativePath, markdown, markdownHash, generatedMarkdownHash, links, paths = {} }) {
   const flags = flagEntries(state);
   const decisions = decisionEntries(state);
+  const session = sessionFromRunState(state);
   return {
     version: 1,
     id,
@@ -459,6 +512,7 @@ function buildAiMemory(state, { id, noteRelativePath, markdown, markdownHash, ge
     summary: shortSummaryFromMarkdown(markdown),
     status: state.status,
     phase: state.phase,
+    session,
     decisions,
     technicalSpec: {
       stack: [],
@@ -615,6 +669,7 @@ export async function writeWikiForRunState(state, { stateDir = DEFAULT_STATE_DIR
 
   const entry = {
     id,
+    runId: state.id,
     title: state.objective,
     objective: state.objective,
     objectiveSlug: state.objectiveSlug,
@@ -627,7 +682,8 @@ export async function writeWikiForRunState(state, { stateDir = DEFAULT_STATE_DIR
     summary: memory.summary,
     tags: memory.graph.tags,
     links,
-    tokens: memory.tokens
+    tokens: memory.tokens,
+    session: memory.session
   };
   const nextIndex = upsertIndexEntry(index, entry, now.toISOString());
   await writeFile(indexPath, `${JSON.stringify(nextIndex, null, 2)}\n`);
@@ -661,6 +717,27 @@ export async function readWikiNote(id, { stateDir = DEFAULT_STATE_DIR } = {}) {
     path: notePath,
     markdown: await readFile(notePath, "utf8")
   };
+}
+
+/**
+ * @param {string} id
+ * @param {{ stateDir?: string }} [options]
+ */
+export async function deleteWikiNote(id, { stateDir = DEFAULT_STATE_DIR } = {}) {
+  assertSafeId(id);
+  const { indexPath, graphPath } = wikiPath(stateDir);
+  const index = await readWikiIndex({ stateDir });
+  /** @type {WikiIndex} */
+  const nextIndex = {
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    notes: index.notes.filter((note) => note.id !== id)
+  };
+  await rm(wikiNotePath({ stateDir, id }), { force: true });
+  await rm(wikiMemoryPath({ stateDir, id }), { force: true });
+  await writeFile(indexPath, `${JSON.stringify(nextIndex, null, 2)}\n`);
+  await writeFile(graphPath, `${JSON.stringify(buildGraph(nextIndex, nextIndex.updatedAt), null, 2)}\n`);
+  return { deleted: index.notes.some((note) => note.id === id), id };
 }
 
 /**
@@ -726,11 +803,28 @@ function renderInlineMarkdown(value) {
  * @param {string} line
  */
 function splitTableRow(line) {
-  return line
+  const body = line
     .trim()
-    .replace(/^\||\|$/g, "")
-    .split("|")
-    .map((cell) => cell.trim());
+    .replace(/^\||\|$/g, "");
+  /** @type {string[]} */
+  const cells = [];
+  let current = "";
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index];
+    if (char === "\\" && body[index + 1] === "|") {
+      current += "|";
+      index += 1;
+      continue;
+    }
+    if (char === "|") {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  cells.push(current.trim());
+  return cells;
 }
 
 /**
@@ -910,7 +1004,11 @@ export function renderWikiDashboardHtml(notes) {
   const recent = notes[0];
   const cards = notes.length === 0
     ? "<p>No Loop Wiki notes found. Run <code>loop \"your objective\"</code> to create the first second-brain note.</p>"
-    : notes.map((note) => `
+    : notes.map((note) => {
+        const logLink = note.runId
+          ? `<a class="button secondary" href="/runs/${encodeURIComponent(note.runId)}/log">View log</a>`
+          : "";
+        return `
       <article class="note-card">
         <div class="note-card-header">
           <span class="status ${statusClass(note.status)}">${escapeHtml(note.status)}</span>
@@ -921,10 +1019,18 @@ export function renderWikiDashboardHtml(notes) {
         <dl class="meta-grid">
           <dt>Updated</dt><dd>${escapeHtml(note.updatedAt)}</dd>
           <dt>Tokens</dt><dd>${escapeHtml(tokenLabel(note.tokens))}</dd>
+          <dt>Agent</dt><dd>${escapeHtml(sessionLabel(note.session))}</dd>
           <dt>Context</dt><dd>${note.links.length === 0 ? "No related notes yet" : `${note.links.length} related note${note.links.length === 1 ? "" : "s"}`}</dd>
         </dl>
-        <a class="button secondary" href="/notes/${encodeURIComponent(note.id)}">Read note</a>
-      </article>`).join("\n");
+        <div class="card-actions">
+          <a class="button secondary" href="/notes/${encodeURIComponent(note.id)}">Read note</a>
+          ${logLink}
+          <form method="post" action="/notes/${encodeURIComponent(note.id)}/delete">
+            <button class="button danger" type="submit">Delete note</button>
+          </form>
+        </div>
+      </article>`;
+      }).join("\n");
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -960,6 +1066,9 @@ export function renderWikiDashboardHtml(notes) {
     .meta-grid dd { margin: 0; overflow-wrap: anywhere; }
     .button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 7px 12px; border-radius: 7px; border: 1px solid var(--blue); background: var(--blue); color: #ffffff; font-weight: 700; text-decoration: none; }
     .button.secondary { justify-self: start; border-color: var(--line); background: #ffffff; color: var(--blue); }
+    .button.danger { border-color: #f0c4bf; background: #fff7f6; color: var(--red); cursor: pointer; }
+    .card-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    form { margin: 0; }
     .empty { color: var(--muted); }
     @media (max-width: 760px) { header { padding: 20px 16px 14px; } main { padding: 16px; } .header-row { display: grid; } .actions { justify-content: flex-start; } }
   </style>
@@ -984,6 +1093,7 @@ export function renderWikiDashboardHtml(notes) {
           <div class="summary-row">
             <span class="status ${statusClass(recent.status)}">${escapeHtml(recent.status)}</span>
             <span>${escapeHtml(recent.phase)}</span>
+            <span>${escapeHtml(sessionLabel(recent.session))}</span>
             <span>${escapeHtml(recent.updatedAt)}</span>
           </div>
           <h3>${escapeHtml(recent.title)}</h3>
@@ -1068,8 +1178,17 @@ export function renderWikiGraphHtml(notes) {
 
 /**
  * @param {string} markdown
+ * @param {{ noteId?: string }} [options]
  */
-export function renderMarkdownHtml(markdown) {
+export function renderMarkdownHtml(markdown, { noteId } = {}) {
+  const toolbar = noteId
+    ? `<nav class="toolbar" aria-label="Note actions">
+        <a class="button" href="/">Back to notes</a>
+        <form method="post" action="/notes/${encodeURIComponent(noteId)}/delete">
+          <button class="button danger" type="submit">Delete note</button>
+        </form>
+      </nav>`
+    : `<nav class="toolbar" aria-label="Note actions"><a class="button" href="/">Back to notes</a></nav>`;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -1095,11 +1214,53 @@ export function renderMarkdownHtml(markdown) {
     code { padding: 1px 5px; border-radius: 5px; background: #eef1f6; }
     pre { padding: 14px; border-radius: 8px; overflow-x: auto; background: #111827; color: #f8fafc; }
     a { color: var(--blue); text-underline-offset: 3px; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 7px 12px; border-radius: 7px; border: 1px solid var(--line); background: #ffffff; color: var(--blue); font-weight: 700; text-decoration: none; }
+    .button.danger { border-color: #f0c4bf; background: #fff7f6; color: #b42318; cursor: pointer; }
+    form { margin: 0; }
     @media (max-width: 760px) { main { padding: 14px; } article { padding: 18px; } h1 { font-size: 26px; } }
   </style>
 </head>
 <body>
-  <main><article>${renderMarkdownBody(markdown)}</article></main>
+  <main>${toolbar}<article>${renderMarkdownBody(markdown)}</article></main>
+</body>
+</html>`;
+}
+
+/**
+ * @param {{ id: string, log: string }} input
+ */
+export function renderRunLogHtml({ id, log }) {
+  const content = log.trim() ? escapeHtml(log) : "No log output recorded yet.";
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Loop Run Log</title>
+  <style>
+    :root { --ink: #17191f; --muted: #596070; --line: #d9dee8; --panel: #ffffff; --page: #f6f7fa; --blue: #1f5fbf; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); background: var(--page); }
+    main { max-width: 1100px; margin: 0 auto; padding: 24px 18px 48px; }
+    header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 12px; }
+    h1 { margin: 0; font-size: 24px; line-height: 1.2; overflow-wrap: anywhere; }
+    p { margin: 6px 0 0; color: var(--muted); }
+    pre { margin: 0; min-height: 62vh; padding: 16px; border: 1px solid var(--line); border-radius: 8px; overflow: auto; background: #111827; color: #f8fafc; white-space: pre-wrap; }
+    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 7px 12px; border-radius: 7px; border: 1px solid var(--line); background: #ffffff; color: var(--blue); font-weight: 700; text-decoration: none; white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Run Log</h1>
+        <p>${escapeHtml(id)}</p>
+      </div>
+      <a class="button" href="/">Back to notes</a>
+    </header>
+    <pre>${content}</pre>
+  </main>
 </body>
 </html>`;
 }

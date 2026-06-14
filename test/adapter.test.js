@@ -325,11 +325,18 @@ test("CLI codex agent mode runs through policy gate and records state", async ()
   );
   const output = JSON.parse(result.stdout);
   const state = JSON.parse(await readFile(output.paths.jsonPath, "utf8"));
+  const log = await readFile(join(stateDir, "runs", `${state.id}.log`), "utf8");
   const codexArgs = JSON.parse(await readFile(join(repo, "codex-args.json"), "utf8"));
 
   assert.equal(result.status, 0);
   assert.equal(output.agent, "codex");
   assert.equal(state.phase, "verify");
+  assert.equal(state.session.agent, "codex");
+  assert.equal(state.session.status, "exited");
+  assert.equal(state.session.exitCode, 0);
+  assert.match(result.stderr, /Loop agent session:/);
+  assert.match(result.stderr, /loop logs --follow/);
+  assert.match(log, /starting codex/);
   assert.equal(state.approvals.humanApproval, true);
   assert.equal(state.verificationEvidence.at(-1).status, "passed");
   assert.deepEqual(codexArgs.slice(0, 3), ["--ask-for-approval", "never", "exec"]);
@@ -388,6 +395,62 @@ test("CLI run opens an already-running dashboard URL", async () => {
   } finally {
     await stopExternalProcess(dashboard);
   }
+});
+
+test("CLI exposes run status, run list, and logs", async () => {
+  const repo = await mkdtemp(join(tmpdir(), "loop-observe-repo-"));
+  const fakeBin = await mkdtemp(join(tmpdir(), "loop-fake-bin-"));
+  const stateDir = join(repo, ".loop");
+  const fakeCodex = join(fakeBin, "codex");
+  await writeFile(fakeCodex, [
+    "#!/usr/bin/env node",
+    "console.log('agent streamed line');"
+  ].join("\n"));
+  await chmod(fakeCodex, 0o755);
+  git(["init", "-b", "main"], repo);
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      resolve("bin/loop.js"),
+      "run",
+      "--agent",
+      "codex",
+      "--no-interview",
+      "--state-dir",
+      stateDir,
+      "Build a darkwear luxury website MVP"
+    ],
+    {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`
+      }
+    }
+  );
+  const jsonStart = result.stdout.indexOf("{");
+  const output = JSON.parse(result.stdout.slice(jsonStart));
+  const status = execFileSync(process.execPath, [resolve("bin/loop.js"), "status", "--state-dir", stateDir], {
+    cwd: repo,
+    encoding: "utf8"
+  });
+  const runs = execFileSync(process.execPath, [resolve("bin/loop.js"), "runs", "--state-dir", stateDir], {
+    cwd: repo,
+    encoding: "utf8"
+  });
+  const logs = execFileSync(process.execPath, [resolve("bin/loop.js"), "logs", output.stateId, "--state-dir", stateDir], {
+    cwd: repo,
+    encoding: "utf8"
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /agent streamed line/);
+  assert.match(status, /No agent process is currently running/);
+  assert.match(status, new RegExp(output.stateId));
+  assert.match(runs, /codex exited \(0\)/);
+  assert.match(logs, /agent streamed line/);
 });
 
 test("CLI run initializes a local git repo when none exists", async () => {

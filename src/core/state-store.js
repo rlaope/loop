@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 
 import { assertValidRunState } from "./schema.js";
@@ -40,7 +40,7 @@ function escapeMarkdown(value) {
 /**
  * @param {string} runsDir
  * @param {string} id
- * @param {".json" | ".md"} extension
+ * @param {".json" | ".md" | ".log"} extension
  */
 function safeRunPath(runsDir, id, extension) {
   if (!SAFE_ID_PATTERN.test(id)) {
@@ -52,6 +52,14 @@ function safeRunPath(runsDir, id, extension) {
     throw new Error(`Run path escapes state directory: ${id}`);
   }
   return target;
+}
+
+/**
+ * @param {unknown} value
+ * @returns {value is NodeJS.ErrnoException}
+ */
+function hasCode(value) {
+  return isRecord(value) && typeof value.code === "string";
 }
 
 /**
@@ -187,6 +195,13 @@ export async function writeRunState(state, { stateDir = DEFAULT_STATE_DIR } = {}
 }
 
 /**
+ * @param {{ stateDir?: string, id: string }} options
+ */
+export function runLogPath({ stateDir = DEFAULT_STATE_DIR, id }) {
+  return safeRunPath(join(stateDir, "runs"), id, ".log");
+}
+
+/**
  * @param {string} id
  * @param {{ stateDir?: string }} [options]
  * @returns {Promise<StateStoreResult>}
@@ -208,6 +223,88 @@ export async function readRunState(id, { stateDir = DEFAULT_STATE_DIR } = {}) {
       }
     };
   }
+}
+
+/**
+ * @param {{ stateDir?: string }} [options]
+ * @returns {Promise<Array<{ state: import("./run-state.js").LoopRunState, path: string, summaryPath: string, logPath: string }>>}
+ */
+export async function listRunStates({ stateDir = DEFAULT_STATE_DIR } = {}) {
+  const runsDir = join(stateDir, "runs");
+  try {
+    const files = (await readdir(runsDir)).filter((file) => file.endsWith(".json"));
+    const runs = [];
+    for (const file of files) {
+      const id = file.slice(0, -5);
+      const jsonPath = safeRunPath(runsDir, id, ".json");
+      const parsed = JSON.parse(await readFile(jsonPath, "utf8"));
+      assertValidRunState(parsed);
+      runs.push({
+        state: parsed,
+        path: jsonPath,
+        summaryPath: safeRunPath(runsDir, id, ".md"),
+        logPath: safeRunPath(runsDir, id, ".log")
+      });
+    }
+    runs.sort((a, b) => String(b.state.updatedAt).localeCompare(String(a.state.updatedAt)));
+    return runs;
+  } catch (error) {
+    if (hasCode(error) && error.code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+}
+
+/**
+ * @param {string} id
+ * @param {{ stateDir?: string }} [options]
+ */
+export async function readRunLog(id, { stateDir = DEFAULT_STATE_DIR } = {}) {
+  try {
+    return await readFile(runLogPath({ stateDir, id }), "utf8");
+  } catch (error) {
+    if (hasCode(error) && error.code === "ENOENT") {
+      return "";
+    }
+    throw error;
+  }
+}
+
+/**
+ * @param {string} id
+ * @param {{ stateDir?: string }} [options]
+ */
+export async function deleteRunState(id, { stateDir = DEFAULT_STATE_DIR } = {}) {
+  const read = await readRunState(id, { stateDir });
+  const state = read.ok ? read.state : null;
+  const runsDir = join(stateDir, "runs");
+  await rm(safeRunPath(runsDir, id, ".json"), { force: true });
+  await rm(safeRunPath(runsDir, id, ".md"), { force: true });
+  await rm(safeRunPath(runsDir, id, ".log"), { force: true });
+
+  const latestIndex = await readLatestIndex(stateDir);
+  if (!latestIndex.ok) {
+    throw new Error(`Corrupt latest-run index: ${latestIndex.error.message ?? latestIndex.error.kind}`);
+  }
+  const index = latestIndex.index;
+  if (state && index[state.objectiveSlug] === id) {
+    const remaining = (await listRunStates({ stateDir }))
+      .filter((run) => run.state.objectiveSlug === state.objectiveSlug);
+    if (remaining[0]) {
+      index[state.objectiveSlug] = remaining[0].state.id;
+    } else {
+      delete index[state.objectiveSlug];
+    }
+  } else {
+    for (const [slug, indexedId] of Object.entries(index)) {
+      if (indexedId === id) {
+        delete index[slug];
+      }
+    }
+  }
+  await writeLatestIndex(stateDir, index);
+  return { deleted: true, state };
 }
 
 /**

@@ -2,9 +2,12 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { once } from "node:events";
 
+import { readRunLog } from "./state-store.js";
 import {
+  deleteWikiNote,
   listWikiNotes,
   readWikiNote,
+  renderRunLogHtml,
   renderWikiGraphHtml,
   renderMarkdownHtml,
   renderWikiDashboardHtml
@@ -120,6 +123,13 @@ export function createWikiServer({
   const server = createServer(async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", dashboardUrl({ host, port }));
+      if (request.method === "POST" && url.pathname.startsWith("/notes/") && url.pathname.endsWith("/delete")) {
+        const id = decodeURIComponent(url.pathname.slice("/notes/".length, -"/delete".length));
+        await deleteWikiNote(id, { stateDir });
+        response.writeHead(303, { location: "/" });
+        response.end();
+        return;
+      }
       if (url.pathname === "/health") {
         response.writeHead(200, { "content-type": "application/json" });
         response.end(`${JSON.stringify({ ok: true, name: "loop-wiki" })}\n`);
@@ -135,7 +145,14 @@ export function createWikiServer({
         const id = decodeURIComponent(url.pathname.slice("/notes/".length));
         const note = await readWikiNote(id, { stateDir });
         response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        response.end(renderMarkdownHtml(note.markdown));
+        response.end(renderMarkdownHtml(note.markdown, { noteId: note.id }));
+        return;
+      }
+      if (url.pathname.startsWith("/runs/") && url.pathname.endsWith("/log")) {
+        const id = decodeURIComponent(url.pathname.slice("/runs/".length, -"/log".length));
+        const log = await readRunLog(id, { stateDir });
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        response.end(renderRunLogHtml({ id, log }));
         return;
       }
       if (url.pathname === "/graph") {

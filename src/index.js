@@ -6,13 +6,24 @@ export { evaluatePolicyGate } from "./core/policy.js";
 export { appendEvidence, createRunState, slugifyObjective, transitionRunState } from "./core/run-state.js";
 export { assertValidRunState, validateRunState } from "./core/schema.js";
 export { evaluateStopCondition } from "./core/stop.js";
-export { readLatestRunBySlug, readRunState, renderRunSummary, writeRunState } from "./core/state-store.js";
 export {
+  deleteRunState,
+  listRunStates,
+  readLatestRunBySlug,
+  readRunLog,
+  readRunState,
+  renderRunSummary,
+  runLogPath,
+  writeRunState
+} from "./core/state-store.js";
+export {
+  deleteWikiNote,
   listWikiNotes,
   noteIdForRunState,
   readWikiIndex,
   readWikiNote,
   renderMarkdownHtml,
+  renderRunLogHtml,
   renderWikiDashboardHtml,
   renderWikiGraphHtml,
   renderWikiList,
@@ -45,7 +56,10 @@ export function printHelp(stream) {
   stream.write(`  loop run "prompt"\n`);
   stream.write(`  loop run --agent codex "prompt"\n`);
   stream.write(`  loop run --agent claudecode "prompt"\n`);
-  stream.write(`  loop wiki [list|read <id>|open <id>|serve]\n`);
+  stream.write(`  loop status\n`);
+  stream.write(`  loop runs [delete <run-id>]\n`);
+  stream.write(`  loop logs [run-id] [--follow]\n`);
+  stream.write(`  loop wiki [list|read <id>|open <id>|delete <id>|serve]\n`);
   stream.write(`  loop --dry-run --objective "<objective>" [--state-dir .loop]\n`);
   stream.write(`\n`);
   stream.write(`Run without cloning:\n`);
@@ -61,6 +75,7 @@ export function printHelp(stream) {
   stream.write(`  --state-dir      Directory for durable Loop state. Defaults to .loop.\n`);
   stream.write(`  --wiki-dashboard  Start the local Loop Wiki dashboard during run mode.\n`);
   stream.write(`  --port           Port for Loop Wiki dashboard. Defaults to 3846.\n`);
+  stream.write(`  --follow         Keep streaming a run log in loop logs.\n`);
   stream.write(`  --isolation      Write isolation mode: branch, worktree, or local.\n`);
   stream.write(`  --acknowledge-local  Explicitly acknowledge local-mode write risk.\n`);
   stream.write(`  --expected-root  Expected git root for write-capable runs. Defaults to cwd.\n`);

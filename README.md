@@ -114,6 +114,23 @@ open it automatically. If it is not running in an interactive terminal, Loop
 asks whether to start it; choosing Yes starts the localhost dashboard and opens
 it in your browser.
 
+While an agent is running, Loop writes a live session record and log under
+`.loop/runs`. You can inspect the run from another terminal:
+
+```sh
+loop status
+loop runs
+loop logs --follow
+```
+
+`loop status` shows whether a Codex or Claude Code process is currently alive.
+`loop runs` lists previous sessions. `loop logs <run-id>` prints a captured
+agent log, and `loop logs --follow` streams the latest run log.
+
+Running the same objective again creates a new run session. Older sessions are
+not reactivated; they remain in history and related wiki notes are connected in
+the graph view.
+
 Dry-run mode is still available when you only want durable state and a wiki
 note without source edits:
 
@@ -127,6 +144,7 @@ Read the generated second-brain notes locally:
 loop wiki list
 loop wiki read <note-id>
 loop wiki open <note-id>
+loop wiki delete <note-id>
 loop wiki
 ```
 
@@ -134,7 +152,14 @@ loop wiki
 markdown note under `.loop/wiki/user` is canonical; AI memory, index, and graph
 files are derived from it. `loop run` does not start the dashboard in
 non-interactive automation unless `--wiki-dashboard` is passed. Most users can
-ignore that flag and open the dashboard later with `loop wiki`.
+ignore that flag and open the dashboard later with `loop wiki`. The dashboard
+also includes note delete buttons and links from each note to the run log.
+
+To remove a run-state session and its captured log:
+
+```sh
+loop runs delete <run-id>
+```
 
 To verify the package:
 

@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 import { isTerminalOutcome } from "./outcomes.js";
 
@@ -67,12 +67,17 @@ function assertBudgetNumber(name, value, { positive = false } = {}) {
 
 /** @param {string} objective */
 export function slugifyObjective(objective) {
-  return objective
+  const asciiSlug = objective
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 80) || "loop";
+    .slice(0, 80);
+  if (asciiSlug) {
+    return asciiSlug;
+  }
+  const hash = createHash("sha256").update(objective.trim()).digest("hex").slice(0, 10);
+  return `loop-${hash}`;
 }
 
 /**

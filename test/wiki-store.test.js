@@ -9,12 +9,14 @@ import { tmpdir } from "node:os";
 import {
   appendEvidence,
   createRunState,
+  deleteWikiNote,
   dashboardActionForRun,
   getDashboardStatus,
   listWikiNotes,
   noteIdForRunState,
   readWikiNote,
   renderMarkdownHtml,
+  renderRunLogHtml,
   renderWikiDashboardHtml,
   renderWikiGraphHtml,
   serveWikiDashboard,
@@ -192,6 +194,17 @@ test("markdown renderer avoids unsafe link schemes", () => {
   assert.doesNotMatch(html, /javascript:alert/);
 });
 
+test("markdown renderer preserves escaped pipes inside table cells", () => {
+  const html = renderMarkdownHtml([
+    "| Field | Value |",
+    "| --- | --- |",
+    "| Path | a\\|b |"
+  ].join("\n"));
+
+  assert.match(html, /<td>a\|b<\/td>/);
+  assert.doesNotMatch(html, /<td>a\\<\/td>/);
+});
+
 test("dashboard links to a separate graph view", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "loop-wiki-dashboard-ui-"));
   const first = createRunState({
@@ -212,6 +225,7 @@ test("dashboard links to a separate graph view", async () => {
   assert.match(html, /Current Reading Context/);
   assert.match(html, /History Stack/);
   assert.match(html, /href="\/graph"/);
+  assert.match(html, /Delete note/);
   assert.match(html, /note-card/);
   assert.doesNotMatch(html, /graph-edge/);
   assert.match(graphHtml, /Graph View/);
@@ -219,6 +233,17 @@ test("dashboard links to a separate graph view", async () => {
   assert.match(graphHtml, /graph-edge/);
   assert.match(graphHtml, /nodeGlow/);
   assert.match(graphHtml, /Readable Connections/);
+});
+
+test("dashboard renders run log pages", () => {
+  const html = renderRunLogHtml({
+    id: "run-1",
+    log: "agent streamed line\n"
+  });
+
+  assert.match(html, /Run Log/);
+  assert.match(html, /agent streamed line/);
+  assert.match(html, /Back to notes/);
 });
 
 test("dashboard server serves the graph view route", async () => {
@@ -245,6 +270,49 @@ test("dashboard server serves the graph view route", async () => {
       await once(served.server, "close");
     }
   }
+});
+
+test("dashboard server deletes wiki notes by post route", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-wiki-delete-route-"));
+  const state = createRunState({
+    objective: "Delete note objective",
+    now: new Date("2026-06-13T08:00:00.000Z")
+  });
+  const port = await getFreePort();
+  const served = await serveWikiDashboard({ stateDir, port });
+  const paths = await writeWikiForRunState(state, { stateDir, now: new Date("2026-06-13T08:01:00.000Z") });
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/notes/${paths.id}/delete`, {
+      method: "POST",
+      redirect: "manual"
+    });
+    const notes = await listWikiNotes({ stateDir });
+
+    assert.equal(response.status, 303);
+    assert.equal(response.headers.get("location"), "/");
+    assert.deepEqual(notes, []);
+  } finally {
+    if (served.server) {
+      served.server.close();
+      await once(served.server, "close");
+    }
+  }
+});
+
+test("deletes wiki notes and rebuilds graph index", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-wiki-delete-note-"));
+  const state = createRunState({
+    objective: "Delete graph objective",
+    now: new Date("2026-06-13T08:00:00.000Z")
+  });
+  const paths = await writeWikiForRunState(state, { stateDir, now: new Date("2026-06-13T08:01:00.000Z") });
+
+  const result = await deleteWikiNote(paths.id, { stateDir });
+  const notes = await listWikiNotes({ stateDir });
+
+  assert.equal(result.deleted, true);
+  assert.deepEqual(notes, []);
 });
 
 test("dashboard run policy respects TTY and explicit flags", () => {

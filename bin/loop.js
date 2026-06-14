@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { appendFileSync, createWriteStream, existsSync, readFileSync, watchFile, unwatchFile } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 
@@ -11,13 +11,18 @@ import {
   createRunState,
   dashboardActionForRun,
   dashboardUrl,
+  deleteRunState,
+  deleteWikiNote,
   getDashboardStatus,
   evaluatePolicyGate,
+  listRunStates,
   listWikiNotes,
   printHelp,
+  readRunLog,
   readWikiNote,
   recordBudgetActivity,
   renderWikiList,
+  runLogPath,
   serveWikiDashboard,
   startDetachedWikiDashboard,
   transitionRunState,
@@ -29,7 +34,8 @@ import {
 } from "../src/index.js";
 
 const rawArgs = process.argv.slice(2);
-const command = rawArgs[0] === "run" || rawArgs[0] === "wiki" ? rawArgs[0] : undefined;
+const knownCommands = new Set(["run", "wiki", "status", "runs", "logs"]);
+const command = knownCommands.has(rawArgs[0]) ? rawArgs[0] : undefined;
 const args = command ? rawArgs.slice(1) : rawArgs;
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const flagsWithValues = new Set([
@@ -47,6 +53,7 @@ const booleanFlags = new Set([
   "--allow-no-remote",
   "--dry-run",
   "--help",
+  "--follow",
   "--no-interview",
   "--read-only",
   "--version",
@@ -319,6 +326,177 @@ function errorMessage(error) {
 }
 
 /**
+ * @param {unknown} value
+ * @returns {value is Record<string, unknown>}
+ */
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * @param {unknown} state
+ */
+function sessionFromState(state) {
+  if (!isRecord(state) || !isRecord(state.session)) {
+    return null;
+  }
+  return state.session;
+}
+
+/**
+ * @param {number | null | undefined} pid
+ */
+function isPidAlive(pid) {
+  if (!pid) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * @param {import("../src/core/run-state.js").LoopRunState} state
+ */
+function runtimeLabel(state) {
+  const session = sessionFromState(state);
+  if (!session) {
+    return state.status === "active" ? "state active, no agent session recorded" : state.status;
+  }
+  const agent = typeof session.agent === "string" ? session.agent : "agent";
+  const status = typeof session.status === "string" ? session.status : "recorded";
+  const pid = typeof session.pid === "number" ? session.pid : null;
+  if (status === "running") {
+    return isPidAlive(pid) ? `${agent} running (pid ${pid})` : `${agent} marked running, pid not alive`;
+  }
+  if (status === "exited") {
+    const exitCode = typeof session.exitCode === "number" ? session.exitCode : "?";
+    return `${agent} exited (${exitCode})`;
+  }
+  return `${agent} ${status}`;
+}
+
+/** @param {string} value @param {number} maxLength */
+function truncate(value, maxLength) {
+  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1)}…`;
+}
+
+/**
+ * @param {{ stateDir?: string }} [options]
+ */
+async function latestRun({ stateDir = ".loop" } = {}) {
+  const runs = await listRunStates({ stateDir });
+  return runs[0] ?? null;
+}
+
+/**
+ * @param {{ stateDir?: string }} [options]
+ */
+async function handleStatusCommand({ stateDir = ".loop" } = {}) {
+  const runs = await listRunStates({ stateDir });
+  if (runs.length === 0) {
+    process.stdout.write("No Loop runs found.\n");
+    return;
+  }
+  const running = runs.filter(({ state }) => {
+    const session = sessionFromState(state);
+    return session && session.status === "running" && isPidAlive(typeof session.pid === "number" ? session.pid : null);
+  });
+  if (running.length > 0) {
+    process.stdout.write("Running agent sessions:\n");
+    for (const { state, logPath } of running) {
+      process.stdout.write(`- ${state.id}\n`);
+      process.stdout.write(`  ${runtimeLabel(state)}\n`);
+      process.stdout.write(`  Objective: ${state.objective}\n`);
+      process.stdout.write(`  Log: ${logPath}\n`);
+    }
+    return;
+  }
+  const latest = runs[0];
+  process.stdout.write("No agent process is currently running.\n");
+  process.stdout.write(`Latest run: ${latest.state.id}\n`);
+  process.stdout.write(`Runtime: ${runtimeLabel(latest.state)}\n`);
+  process.stdout.write(`Phase/status: ${latest.state.phase}/${latest.state.status}\n`);
+  process.stdout.write(`Next action: ${latest.state.nextAction}\n`);
+  process.stdout.write(`Log: ${latest.logPath}\n`);
+}
+
+/**
+ * @param {{ stateDir?: string }} [options]
+ */
+async function handleRunsCommand({ stateDir = ".loop" } = {}) {
+  const positionals = positionalArgs();
+  if (positionals[0] === "delete") {
+    const id = positionals[1];
+    if (!id) {
+      process.stderr.write("loop runs delete requires a run id\n");
+      process.exit(1);
+    }
+    await deleteRunState(id, { stateDir });
+    process.stdout.write(`Deleted run ${id}\n`);
+    return;
+  }
+  const runs = await listRunStates({ stateDir });
+  if (runs.length === 0) {
+    process.stdout.write("No Loop runs found.\n");
+    return;
+  }
+  process.stdout.write("| Run ID | Runtime | Phase | Updated | Objective |\n");
+  process.stdout.write("| --- | --- | --- | --- | --- |\n");
+  for (const { state } of runs) {
+    process.stdout.write(`| ${state.id} | ${runtimeLabel(state)} | ${state.phase}/${state.status} | ${state.updatedAt} | ${truncate(state.objective.replace(/\|/g, "\\|"), 80)} |\n`);
+  }
+}
+
+/**
+ * @param {string} path
+ * @param {number} offset
+ */
+function readFileFrom(path, offset) {
+  const text = readFileSync(path, "utf8");
+  return {
+    text: text.slice(offset),
+    offset: text.length
+  };
+}
+
+/**
+ * @param {{ stateDir?: string }} [options]
+ */
+async function handleLogsCommand({ stateDir = ".loop" } = {}) {
+  const positionals = positionalArgs();
+  const id = positionals[0] && positionals[0] !== "follow" ? positionals[0] : (await latestRun({ stateDir }))?.state.id;
+  if (!id) {
+    process.stdout.write("No Loop runs found.\n");
+    return;
+  }
+  const logPath = runLogPath({ stateDir, id });
+  const existing = await readRunLog(id, { stateDir });
+  process.stdout.write(existing || `No log output recorded yet for ${id}.\n`);
+  if (!has("--follow")) {
+    return;
+  }
+  let offset = existing.length;
+  process.stderr.write(`Following ${logPath}. Press Ctrl-C to stop.\n`);
+  await new Promise(() => {
+    watchFile(logPath, { interval: 500 }, () => {
+      try {
+        const next = readFileFrom(logPath, offset);
+        offset = next.offset;
+        if (next.text) {
+          process.stdout.write(next.text);
+        }
+      } catch {
+        unwatchFile(logPath);
+      }
+    });
+  });
+}
+
+/**
  * @param {string} target
  */
 function openTarget(target) {
@@ -426,6 +604,21 @@ async function handleWikiCommand() {
       process.exit(0);
     } catch (error) {
       process.stderr.write(`Wiki note open failed: ${errorMessage(error)}\n`);
+      process.exit(1);
+    }
+  }
+
+  if (subcommand === "delete") {
+    if (!id) {
+      process.stderr.write("loop wiki delete requires a note id\n");
+      process.exit(1);
+    }
+    try {
+      const result = await deleteWikiNote(id, { stateDir });
+      process.stdout.write(result.deleted ? `Deleted wiki note ${id}\n` : `Wiki note ${id} was already absent\n`);
+      process.exit(0);
+    } catch (error) {
+      process.stderr.write(`Wiki note delete failed: ${errorMessage(error)}\n`);
       process.exit(1);
     }
   }
@@ -587,6 +780,16 @@ function agentCommand(agent, prompt, writeMode) {
   if (agent === "codex") {
     return {
       command: "codex",
+      displayArgs: [
+        "--ask-for-approval",
+        "never",
+        "exec",
+        "--sandbox",
+        writeMode ? "workspace-write" : "read-only",
+        "--cd",
+        process.cwd(),
+        "<loop prompt>"
+      ],
       args: [
         "--ask-for-approval",
         "never",
@@ -601,12 +804,109 @@ function agentCommand(agent, prompt, writeMode) {
   }
   return {
     command: "claude",
+    displayArgs: [
+      "--print",
+      "--permission-mode",
+      writeMode ? "acceptEdits" : "plan",
+      "<loop prompt>"
+    ],
     args: [
       "--print",
       "--permission-mode",
       writeMode ? "acceptEdits" : "plan",
       prompt
     ]
+  };
+}
+
+/**
+ * @param {import("../src/core/run-state.js").LoopRunState} state
+ * @param {Record<string, unknown>} session
+ */
+function withSession(state, session) {
+  const stateRecord = /** @type {Record<string, unknown>} */ (state);
+  return {
+    ...state,
+    session: {
+      ...(isRecord(stateRecord.session) ? stateRecord.session : {}),
+      ...session
+    },
+    updatedAt: new Date().toISOString()
+  };
+}
+
+/**
+ * @param {{ command: string, args: string[], displayArgs: string[] }} command
+ * @param {{ agent: string, state: import("../src/core/run-state.js").LoopRunState, stateDir: string, onStarted?: (state: import("../src/core/run-state.js").LoopRunState, paths: { jsonPath?: string, summaryPath?: string }) => Promise<void> }} options
+ */
+async function runAgentProcess(command, { agent, state, stateDir, onStarted }) {
+  const logPath = runLogPath({ stateDir, id: state.id });
+  const log = createWriteStream(logPath, { flags: "a" });
+  log.write(`[loop] ${new Date().toISOString()} starting ${agent}\n`);
+  log.write(`[loop] command: ${command.command} ${command.displayArgs.join(" ")}\n\n`);
+  const child = spawn(command.command, command.args, {
+    cwd: process.cwd(),
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  const runningState = withSession(state, {
+    agent,
+    status: "running",
+    pid: child.pid ?? null,
+    command: command.command,
+    args: command.displayArgs,
+    cwd: process.cwd(),
+    logPath,
+    startedAt: new Date().toISOString(),
+    endedAt: null,
+    exitCode: null,
+    signal: null
+  });
+  const runningPaths = await writeRunState(runningState, { stateDir });
+  if (onStarted) {
+    await onStarted(runningState, runningPaths);
+  }
+
+  child.stdout.on("data", (chunk) => {
+    process.stdout.write(chunk);
+    log.write(chunk);
+  });
+  child.stderr.on("data", (chunk) => {
+    process.stderr.write(chunk);
+    log.write(chunk);
+  });
+
+  /** @type {{ error?: Error, exitCode: number, signal: NodeJS.Signals | null }} */
+  const result = await new Promise((resolve) => {
+    let settled = false;
+    child.once("error", (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      log.write(`\n[loop] ${new Date().toISOString()} failed to start: ${error.message}\n`);
+      resolve({ error, exitCode: 1, signal: null });
+    });
+    child.once("close", (code, signal) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      const exitCode = code ?? (signal ? 1 : 0);
+      log.write(`\n[loop] ${new Date().toISOString()} ${agent} exited with status ${exitCode}${signal ? ` signal ${signal}` : ""}.\n`);
+      resolve({ exitCode, signal });
+    });
+  });
+  await new Promise((resolve) => log.end(resolve));
+  return {
+    ...result,
+    state: withSession(runningState, {
+      status: result.error ? "failed_to_start" : "exited",
+      endedAt: new Date().toISOString(),
+      exitCode: result.exitCode,
+      signal: result.signal
+    }),
+    logPath
   };
 }
 
@@ -681,20 +981,20 @@ async function runAgent({
 
   const prompt = buildAgentPrompt(objective, { writeMode });
   const command = agentCommand(agent, prompt, writeMode);
-  const result = spawnSync(command.command, command.args, {
-    encoding: "utf8",
-    maxBuffer: 10 * 1024 * 1024
+  const result = await runAgentProcess(command, {
+    agent,
+    state,
+    stateDir,
+    onStarted: async (runningState, runningPaths) => {
+      await writeWikiOrExit(runningState, runningPaths, { stateDir, context: "running agent session" });
+      process.stderr.write(`Loop agent session: ${runningState.id}\n`);
+      process.stderr.write(`Loop agent log: ${runLogPath({ stateDir, id: runningState.id })}\n`);
+      process.stderr.write("Inspect from another terminal: loop status | loop runs | loop logs --follow\n");
+    }
   });
 
-  if (result.stdout) {
-    process.stdout.write(result.stdout);
-  }
-  if (result.stderr) {
-    process.stderr.write(result.stderr);
-  }
-
   if (result.error) {
-    const failed = transitionRunState(appendEvidence(state, {
+    const failed = transitionRunState(appendEvidence(result.state, {
       kind: "agent-run",
       status: "failed",
       summary: `${agent} agent failed to start: ${result.error.message}`
@@ -707,8 +1007,8 @@ async function runAgent({
     process.exit(5);
   }
 
-  const exitCode = result.status ?? 1;
-  const afterRun = appendEvidence(recordBudgetActivity(state, {
+  const exitCode = result.exitCode;
+  const afterRun = appendEvidence(recordBudgetActivity(result.state, {
     kind: "agent-run",
     estimatedTokens: 0,
     attempts: 1
@@ -757,6 +1057,25 @@ try {
   process.stderr.write(`${errorMessage(error)}\n\n`);
   printHelp(process.stderr);
   process.exit(1);
+}
+
+if (command === "status" || command === "runs" || command === "logs") {
+  let stateDir;
+  try {
+    stateDir = valueFor("--state-dir") ?? ".loop";
+    if (command === "status") {
+      await handleStatusCommand({ stateDir });
+    } else if (command === "runs") {
+      await handleRunsCommand({ stateDir });
+    } else {
+      await handleLogsCommand({ stateDir });
+    }
+    process.exit(0);
+  } catch (error) {
+    process.stderr.write(`${errorMessage(error)}\n\n`);
+    printHelp(process.stderr);
+    process.exit(1);
+  }
 }
 
 if (command === "wiki") {

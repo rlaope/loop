@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { appendEvidence, createRunState, terminalOutcomes, transitionRunState, validateRunState } from "../src/index.js";
+import { appendEvidence, createRunState, slugifyObjective, terminalOutcomes, transitionRunState, validateRunState } from "../src/index.js";
 
 test("creates a valid run state with required contract fields", () => {
   const state = createRunState({
@@ -14,6 +14,16 @@ test("creates a valid run state with required contract fields", () => {
   assert.equal(state.phase, "intake");
   assert.equal(state.budget.maxAttempts, 3);
   assert.equal(validateRunState(state).valid, true);
+});
+
+test("slugifies non-ascii objectives into stable distinct safe slugs", () => {
+  const first = slugifyObjective("다크웨어 명품 큐레이션 전시 사이트");
+  const same = slugifyObjective("다크웨어 명품 큐레이션 전시 사이트");
+  const other = slugifyObjective("서로 다른 한국어 목적");
+
+  assert.match(first, /^loop-[a-f0-9]{10}$/);
+  assert.equal(first, same);
+  assert.notEqual(first, other);
 });
 
 test("rejects missing required schema fields", () => {
