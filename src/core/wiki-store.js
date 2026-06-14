@@ -1297,14 +1297,19 @@ export function renderWikiDashboardHtml(notes) {
     const key = note.parentId ?? "";
     childrenByParent.set(key, [...(childrenByParent.get(key) ?? []), note]);
   }
-  const rootNotes = runNotes.length > 0
-    ? runNotes
-    : notes.filter((note) => !note.parentId);
-  const stacks = rootNotes.map((runNote) => {
-    const children = childrenByParent.get(runNote.id) ?? [];
-    const childRows = children.length === 0
-      ? "<p class=\"muted small\">No attached notes.</p>"
-      : children.map((child) => `
+  /** @type {Set<string>} */
+  const renderedAttachedIds = new Set();
+  /**
+   * @param {WikiIndexEntry[]} children
+   */
+  const renderAttachedRows = (children) => {
+    if (children.length === 0) {
+      return "<p class=\"muted small\">No attached notes.</p>";
+    }
+    for (const child of children) {
+      renderedAttachedIds.add(child.id);
+    }
+    return children.map((child) => `
           <article class="attached-note">
             <div>
               <div class="note-row-meta">
@@ -1321,6 +1326,13 @@ export function renderWikiDashboardHtml(notes) {
               </form>
             </div>
           </article>`).join("");
+  };
+  const rootNotes = runNotes.length > 0
+    ? runNotes
+    : notes.filter((note) => !note.parentId);
+  const rootStacks = rootNotes.map((runNote) => {
+    const children = childrenByParent.get(runNote.id) ?? [];
+    const childRows = renderAttachedRows(children);
     const logLink = runNote.runId
       ? `<a class="button ghost" href="/runs/${encodeURIComponent(runNote.runId)}/log">View Log</a>`
       : "";
@@ -1351,6 +1363,27 @@ export function renderWikiDashboardHtml(notes) {
         </div>
       </article>`;
   }).join("\n");
+  const unstackedNotes = attachedNotes.filter((note) => !renderedAttachedIds.has(note.id));
+  const unstackedStack = unstackedNotes.length === 0
+    ? ""
+    : `
+      <article class="run-stack unstacked-stack">
+        <div class="run-main">
+          <div class="note-card-header">
+            <span class="kind">notes</span>
+            <span class="status status-active">preserved</span>
+          </div>
+          <h3>Unattached Notes</h3>
+          <p>Notes whose parent run or parent note is no longer visible in this stack.</p>
+        </div>
+        <div class="attached-list">
+          <div class="section-title-row">
+            <h4>Visible Notes</h4>
+            <span>${unstackedNotes.length}</span>
+          </div>
+          ${renderAttachedRows(unstackedNotes)}
+        </div>
+      </article>`;
   const latest = recent ? `
       <article class="latest-card">
         <div class="note-card-header">
@@ -1365,7 +1398,7 @@ export function renderWikiDashboardHtml(notes) {
         </div>
       </article>`
     : "<article class=\"latest-card empty\"><h2>No notes yet.</h2></article>";
-  const stackHtml = stacks || "<p class=\"muted\">No Loop Wiki notes found.</p>";
+  const stackHtml = `${rootStacks}${unstackedStack}` || "<p class=\"muted\">No Loop Wiki notes found.</p>";
   return `<!doctype html>
 <html lang="en">
 <head>

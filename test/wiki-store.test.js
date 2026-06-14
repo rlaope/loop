@@ -366,6 +366,44 @@ test("dashboard server deletes wiki notes by post route", async () => {
   }
 });
 
+test("dashboard keeps attached notes visible when their parent is deleted", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-wiki-orphaned-note-"));
+  const parent = createRunState({
+    objective: "Parent run",
+    now: new Date("2026-06-13T08:00:00.000Z")
+  });
+  const other = createRunState({
+    objective: "Other run",
+    now: new Date("2026-06-13T09:00:00.000Z")
+  });
+  const parentPaths = await writeWikiForRunState(parent, {
+    stateDir,
+    now: new Date("2026-06-13T08:01:00.000Z")
+  });
+  const child = await writeWikiSupportingNote({
+    stateDir,
+    runId: parent.id,
+    kind: "plan",
+    title: "Orphaned implementation plan",
+    body: "This note should remain readable after its parent is deleted.",
+    now: new Date("2026-06-13T08:02:00.000Z")
+  });
+  await writeWikiForRunState(other, {
+    stateDir,
+    now: new Date("2026-06-13T09:01:00.000Z")
+  });
+
+  await deleteWikiNote(parentPaths.id, { stateDir });
+  const notes = await listWikiNotes({ stateDir });
+  const html = renderWikiDashboardHtml(notes);
+
+  assert.equal(notes.length, 2);
+  assert.match(html, /Unattached Notes/);
+  assert.match(html, /Orphaned implementation plan/);
+  assert.match(html, new RegExp(`href="/notes/${child.id}"`));
+  assert.match(html, new RegExp(`action="/notes/${child.id}/delete"`));
+});
+
 test("deletes wiki notes and rebuilds graph index", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "loop-wiki-delete-note-"));
   const state = createRunState({
