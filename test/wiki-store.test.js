@@ -67,7 +67,8 @@ test("writes canonical markdown and derived AI memory", async () => {
   assert.match(note.markdown, /## Purpose/);
   assert.match(note.markdown, /## Decision Log/);
   assert.match(note.markdown, /## Graph Links/);
-  assert.match(note.markdown, /## Token Usage/);
+  assert.doesNotMatch(note.markdown, /## Token Usage/);
+  assert.doesNotMatch(note.markdown, /## Related Notes/);
   assert.doesNotMatch(note.markdown, /No explicit decisions recorded in run state/);
   assert.equal(memory.canonicalNote, `../user/${paths.id}.md`);
   assert.match(memory.derivedFromHash, /^sha256:/);
@@ -210,7 +211,7 @@ test("links previous notes with the same objective slug", async () => {
   assert.equal(memory.graph.links[0].title, "Same wiki objective");
   assert.equal(graph.edges.length, 1);
   assert.equal(graph.edges[0].target, noteIdForRunState(first));
-  assert.match(note.markdown, /## Related Notes\n\n- Same wiki objective\n\n## Graph Links/);
+  assert.doesNotMatch(note.markdown, /## Related Notes/);
   assert.doesNotMatch(note.markdown, /active\/intake, updated/);
   assert.match(note.markdown, /- continues: Same wiki objective/);
   assert.match(note.markdown, /This note continues 1 earlier note for the same objective/);
@@ -285,17 +286,19 @@ test("dashboard links to a separate graph view", async () => {
   const html = renderWikiDashboardHtml(notes);
   const graphHtml = renderWikiGraphHtml(notes);
 
-  assert.match(html, /Current Reading Context/);
-  assert.match(html, /History Stack/);
+  assert.match(html, /Second Brain/);
+  assert.match(html, /Loop Stack/);
   assert.match(html, /href="\/graph"/);
-  assert.match(html, /Delete note/);
-  assert.match(html, /note-card/);
+  assert.match(html, />Delete</);
+  assert.match(html, /run-stack/);
+  assert.doesNotMatch(html, /Tokens/);
   assert.doesNotMatch(html, /graph-edge/);
   assert.match(graphHtml, /Graph View/);
-  assert.match(graphHtml, /<svg viewBox="0 0 520 300"/);
+  assert.match(graphHtml, /<svg viewBox="0 0 1100 680"/);
   assert.match(graphHtml, /graph-edge/);
   assert.match(graphHtml, /nodeGlow/);
   assert.match(graphHtml, /Readable Connections/);
+  assert.match(graphHtml, /graph-kind-run/);
 });
 
 test("dashboard renders run log pages", () => {
@@ -326,7 +329,7 @@ test("dashboard server serves the graph view route", async () => {
     assert.equal(response.status, 200);
     assert.match(html, /Graph View/);
     assert.match(html, /Back to notes/);
-    assert.match(html, /<svg viewBox="0 0 520 300"/);
+    assert.match(html, /<svg viewBox="0 0 1100 680"/);
   } finally {
     if (served.server) {
       served.server.close();

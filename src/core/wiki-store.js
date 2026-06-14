@@ -481,9 +481,6 @@ export function renderWikiNote(state, { id, links, paths = {} }) {
   const flagText = flags.length === 0
     ? "No flags recorded."
     : flags.map((flag) => `- ${flag.severity}: ${flag.kind} - ${flag.text}`).join("\n");
-  const linkText = links.length === 0
-    ? "No related notes yet."
-    : links.map((link) => `- ${relatedNoteTitle(link)}`).join("\n");
   const decisions = decisionEntries(state);
   const decisionText = decisions
     .map((entry) => `- ${entry.decision} ${entry.rationale}`)
@@ -542,10 +539,6 @@ export function renderWikiNote(state, { id, links, paths = {} }) {
     "",
     flagText,
     "",
-    "## Related Notes",
-    "",
-    linkText,
-    "",
     "## Graph Links",
     "",
     links.length === 0
@@ -555,12 +548,6 @@ export function renderWikiNote(state, { id, links, paths = {} }) {
           "",
           ...links.map((link) => `- ${link.relationship}: ${relatedNoteTitle(link)}`)
         ].join("\n"),
-    "",
-    "## Token Usage",
-    "",
-    "Exact token usage is not available from the current run state.",
-    "",
-    `Budget estimate used: ${state.budget.estimatedTokensUsed}/${state.budget.maxEstimatedTokens} estimated tokens.`,
     "",
     "## Machine Context",
     "",
@@ -646,9 +633,6 @@ function buildAiMemory(state, { id, noteRelativePath, markdown, markdownHash, ge
  * @param {{ kind: string, title: string, body: string, parent: WikiIndexEntry, links: WikiLink[] }} input
  */
 function renderSupportingWikiNote({ kind, title, body, parent, links }) {
-  const linkText = links.length === 0
-    ? "No graph links recorded."
-    : links.map((link) => `- ${relatedNoteTitle(link)}`).join("\n");
   return [
     `# ${title}`,
     "",
@@ -667,10 +651,6 @@ function renderSupportingWikiNote({ kind, title, body, parent, links }) {
     "## How It Connects",
     "",
     `This note supports the parent loop by preserving a separate ${kind} artifact instead of folding it into the main run note.`,
-    "",
-    "## Related Notes",
-    "",
-    linkText,
     ""
   ].join("\n");
 }
@@ -1047,16 +1027,6 @@ function statusClass(value) {
   return "status-active";
 }
 
-/**
- * @param {WikiTokenUsage} tokens
- */
-function tokenLabel(tokens) {
-  if (tokens.total !== null) {
-    return `${tokens.total} total`;
-  }
-  return tokens.source === "unknown" ? "unknown" : tokens.source;
-}
-
 /** @param {string} value */
 function safeLinkHref(value) {
   const href = value.trim();
@@ -1229,20 +1199,52 @@ function graphEdges(notes) {
  */
 function renderGraphSvg(notes) {
   if (notes.length === 0) {
-    return "<p>No graph nodes yet. Run Loop once to create the first note.</p>";
+    return "<p class=\"empty\">No graph nodes yet.</p>";
   }
-  const width = 520;
-  const height = 300;
+  const width = 1100;
+  const height = 680;
   const centerX = width / 2;
   const centerY = height / 2;
-  const radius = Math.min(150, 60 + notes.length * 18);
-  const positions = new Map(notes.map((note, index) => {
-    const angle = notes.length === 1 ? -Math.PI / 2 : (Math.PI * 2 * index / notes.length) - Math.PI / 2;
-    return [note.id, {
-      x: centerX + Math.cos(angle) * radius,
-      y: centerY + Math.sin(angle) * radius
-    }];
-  }));
+  /** @type {Map<string, { x: number, y: number }>} */
+  const positions = new Map();
+  const roots = notes.filter((note) => isRunNote(note) || !note.parentId);
+  const rootNotes = roots.length > 0 ? roots : notes.slice(0, 1);
+  const rootRadius = rootNotes.length === 1 ? 0 : Math.min(220, 130 + rootNotes.length * 18);
+  rootNotes.forEach((note, index) => {
+    const angle = rootNotes.length === 1 ? 0 : (Math.PI * 2 * index / rootNotes.length) - Math.PI / 2;
+    positions.set(note.id, {
+      x: centerX + Math.cos(angle) * rootRadius,
+      y: centerY + Math.sin(angle) * rootRadius
+    });
+  });
+  /** @type {Map<string, WikiIndexEntry[]>} */
+  const childrenByParent = new Map();
+  for (const note of notes) {
+    if (!note.parentId) {
+      continue;
+    }
+    childrenByParent.set(note.parentId, [...(childrenByParent.get(note.parentId) ?? []), note]);
+  }
+  for (const [parentId, children] of childrenByParent) {
+    const parent = positions.get(parentId) ?? { x: centerX, y: centerY };
+    const radius = Math.min(170, 82 + children.length * 12);
+    children.forEach((note, index) => {
+      const angle = (Math.PI * 2 * index / children.length) - Math.PI / 2;
+      positions.set(note.id, {
+        x: Math.max(60, Math.min(width - 60, parent.x + Math.cos(angle) * radius)),
+        y: Math.max(60, Math.min(height - 70, parent.y + Math.sin(angle) * radius))
+      });
+    });
+  }
+  const unpositioned = notes.filter((note) => !positions.has(note.id));
+  const outerRadius = Math.min(300, 180 + unpositioned.length * 10);
+  unpositioned.forEach((note, index) => {
+    const angle = (Math.PI * 2 * index / unpositioned.length) + Math.PI / 5;
+    positions.set(note.id, {
+      x: centerX + Math.cos(angle) * outerRadius,
+      y: centerY + Math.sin(angle) * outerRadius
+    });
+  });
   const edges = graphEdges(notes);
   const edgeHtml = edges.map((edge) => {
     const source = positions.get(edge.source);
@@ -1250,28 +1252,33 @@ function renderGraphSvg(notes) {
     if (!source || !target) {
       return "";
     }
-    return `<line x1="${source.x.toFixed(1)}" y1="${source.y.toFixed(1)}" x2="${target.x.toFixed(1)}" y2="${target.y.toFixed(1)}" class="graph-edge"><title>${escapeHtml(edge.relationship)}: ${escapeHtml(edge.reason)}</title></line>`;
+    return `<line x1="${source.x.toFixed(1)}" y1="${source.y.toFixed(1)}" x2="${target.x.toFixed(1)}" y2="${target.y.toFixed(1)}" class="graph-edge graph-edge-${escapeHtml(edge.relationship)}"><title>${escapeHtml(edge.relationship)}: ${escapeHtml(edge.reason)}</title></line>`;
   }).join("");
   const nodeHtml = notes.map((note) => {
     const point = positions.get(note.id);
     if (!point) {
       return "";
     }
-    const label = truncateText(note.title, 28);
-    return `<a href="/notes/${encodeURIComponent(note.id)}" class="graph-node-link"><g class="graph-node ${statusClass(note.status)}">
-      <circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="18"><title>${escapeHtml(note.title)}</title></circle>
-      <text x="${point.x.toFixed(1)}" y="${(point.y + 34).toFixed(1)}" text-anchor="middle">${escapeHtml(label)}</text>
+    const label = truncateText(note.title, 24);
+    const radius = isRunNote(note) ? 16 : 10;
+    return `<a href="/notes/${encodeURIComponent(note.id)}" class="graph-node-link"><g class="graph-node graph-kind-${escapeHtml(note.kind)} ${statusClass(note.status)}">
+      <circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="${radius}"><title>${escapeHtml(note.title)}</title></circle>
+      <text x="${point.x.toFixed(1)}" y="${(point.y + radius + 18).toFixed(1)}" text-anchor="middle">${escapeHtml(label)}</text>
     </g></a>`;
   }).join("");
   return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Loop Wiki graph view">
     <defs>
-      <filter id="nodeGlow" x="-80%" y="-80%" width="260%" height="260%">
-        <feGaussianBlur stdDeviation="3" result="blur"></feGaussianBlur>
+      <filter id="nodeGlow" x="-120%" y="-120%" width="340%" height="340%">
+        <feGaussianBlur stdDeviation="5" result="blur"></feGaussianBlur>
         <feMerge>
           <feMergeNode in="blur"></feMergeNode>
           <feMergeNode in="SourceGraphic"></feMergeNode>
         </feMerge>
       </filter>
+      <radialGradient id="runNode" cx="50%" cy="45%" r="70%">
+        <stop offset="0%" stop-color="#f4f0e8"></stop>
+        <stop offset="100%" stop-color="#8bd3ff"></stop>
+      </radialGradient>
     </defs>
     ${edgeHtml}${nodeHtml}
   </svg>`;
@@ -1282,40 +1289,83 @@ function renderGraphSvg(notes) {
  */
 export function renderWikiDashboardHtml(notes) {
   const recent = notes[0];
-  const cards = notes.length === 0
-    ? "<p>No Loop Wiki notes found. Run <code>loop \"your objective\"</code> to create the first second-brain note.</p>"
-    : notes.map((note) => {
-        const logLink = note.runId
-          ? `<a class="button secondary" href="/runs/${encodeURIComponent(note.runId)}/log">View log</a>`
-          : "";
-        const parentRow = note.parentTitle
-          ? `<dt>Parent</dt><dd>${escapeHtml(truncateText(note.parentTitle, 80))}</dd>`
-          : "";
-        return `
-      <article class="note-card">
-        <div class="note-card-header">
-          <span class="kind">${escapeHtml(note.kind)}</span>
-          <span class="status ${statusClass(note.status)}">${escapeHtml(note.status)}</span>
-          <span>${escapeHtml(note.phase)}</span>
+  const runNotes = notes.filter(isRunNote);
+  const attachedNotes = notes.filter((note) => note.parentId);
+  /** @type {Map<string, WikiIndexEntry[]>} */
+  const childrenByParent = new Map();
+  for (const note of attachedNotes) {
+    const key = note.parentId ?? "";
+    childrenByParent.set(key, [...(childrenByParent.get(key) ?? []), note]);
+  }
+  const rootNotes = runNotes.length > 0
+    ? runNotes
+    : notes.filter((note) => !note.parentId);
+  const stacks = rootNotes.map((runNote) => {
+    const children = childrenByParent.get(runNote.id) ?? [];
+    const childRows = children.length === 0
+      ? "<p class=\"muted small\">No attached notes.</p>"
+      : children.map((child) => `
+          <article class="attached-note">
+            <div>
+              <div class="note-row-meta">
+                <span class="kind">${escapeHtml(child.kind)}</span>
+                <span>${escapeHtml(child.updatedAt)}</span>
+              </div>
+              <h4>${escapeHtml(child.title)}</h4>
+              <p>${escapeHtml(child.summary)}</p>
+            </div>
+            <div class="inline-actions">
+              <a class="text-link" href="/notes/${encodeURIComponent(child.id)}">Read</a>
+              <form method="post" action="/notes/${encodeURIComponent(child.id)}/delete">
+                <button class="text-danger" type="submit">Delete</button>
+              </form>
+            </div>
+          </article>`).join("");
+    const logLink = runNote.runId
+      ? `<a class="button ghost" href="/runs/${encodeURIComponent(runNote.runId)}/log">View Log</a>`
+      : "";
+    return `
+      <article class="run-stack">
+        <div class="run-main">
+          <div class="note-card-header">
+            <span class="kind">${escapeHtml(runNote.kind)}</span>
+            <span class="status ${statusClass(runNote.status)}">${escapeHtml(runNote.status)}</span>
+            <span>${escapeHtml(sessionLabel(runNote.session))}</span>
+          </div>
+          <h3>${escapeHtml(runNote.title)}</h3>
+          <p>${escapeHtml(runNote.summary)}</p>
+          <div class="card-actions">
+            <a class="button secondary" href="/notes/${encodeURIComponent(runNote.id)}">Read Note</a>
+            ${logLink}
+            <form method="post" action="/notes/${encodeURIComponent(runNote.id)}/delete">
+              <button class="button danger" type="submit">Delete</button>
+            </form>
+          </div>
         </div>
-        <h3>${escapeHtml(note.title)}</h3>
-        <p>${escapeHtml(note.summary)}</p>
-        <dl class="meta-grid">
-          <dt>Updated</dt><dd>${escapeHtml(note.updatedAt)}</dd>
-          ${parentRow}
-          <dt>Tokens</dt><dd>${escapeHtml(tokenLabel(note.tokens))}</dd>
-          <dt>Agent</dt><dd>${escapeHtml(sessionLabel(note.session))}</dd>
-          <dt>Context</dt><dd>${note.links.length === 0 ? "No related notes yet" : `${note.links.length} related note${note.links.length === 1 ? "" : "s"}`}</dd>
-        </dl>
-        <div class="card-actions">
-          <a class="button secondary" href="/notes/${encodeURIComponent(note.id)}">Read note</a>
-          ${logLink}
-          <form method="post" action="/notes/${encodeURIComponent(note.id)}/delete">
-            <button class="button danger" type="submit">Delete note</button>
-          </form>
+        <div class="attached-list">
+          <div class="section-title-row">
+            <h4>Attached Notes</h4>
+            <span>${children.length}</span>
+          </div>
+          ${childRows}
         </div>
       </article>`;
-      }).join("\n");
+  }).join("\n");
+  const latest = recent ? `
+      <article class="latest-card">
+        <div class="note-card-header">
+          <span class="kind">${escapeHtml(recent.kind)}</span>
+          <span class="status ${statusClass(recent.status)}">${escapeHtml(recent.status)}</span>
+          <span>${escapeHtml(recent.updatedAt)}</span>
+        </div>
+        <h2>${escapeHtml(recent.title)}</h2>
+        <p>${escapeHtml(recent.summary)}</p>
+        <div class="card-actions">
+          <a class="button secondary" href="/notes/${encodeURIComponent(recent.id)}">Read Latest</a>
+        </div>
+      </article>`
+    : "<article class=\"latest-card empty\"><h2>No notes yet.</h2></article>";
+  const stackHtml = stacks || "<p class=\"muted\">No Loop Wiki notes found.</p>";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -1323,48 +1373,66 @@ export function renderWikiDashboardHtml(notes) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Loop Wiki</title>
   <style>
-    :root { color-scheme: light; --ink: #16181d; --muted: #596070; --line: #d9dee8; --panel: #ffffff; --page: #f5f7fa; --blue: #1f5fbf; --green: #1f7a4d; --red: #b42318; --amber: #9a6700; }
+    :root { color-scheme: dark; --ink: #f4f0e8; --muted: #9da0a6; --line: #2a2b31; --panel: #15161a; --panel-strong: #1d1f25; --page: #090a0d; --blue: #8bd3ff; --green: #77d99a; --red: #ff7b72; --amber: #f4c95d; --violet: #c9a7ff; }
     * { box-sizing: border-box; }
-    body { margin: 0; font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); background: var(--page); }
-    header { padding: 24px 32px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
-    main { padding: 20px 32px 36px; }
-    h1 { margin: 0; font-size: 28px; line-height: 1.1; }
-    h2 { margin: 0 0 12px; font-size: 18px; }
-    h3 { margin: 8px 0; font-size: 17px; line-height: 1.25; }
+    body { margin: 0; min-height: 100vh; font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); background: var(--page); }
+    body::before { content: ""; position: fixed; inset: 0; pointer-events: none; background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px); background-size: 32px 32px; mask-image: linear-gradient(to bottom, rgba(0,0,0,.8), rgba(0,0,0,.18)); }
+    header { position: sticky; top: 0; z-index: 5; padding: 18px 32px; border-bottom: 1px solid var(--line); background: rgba(9, 10, 13, .92); backdrop-filter: blur(14px); }
+    main { position: relative; padding: 22px 32px 40px; }
+    h1 { margin: 0; font-size: 25px; line-height: 1.1; letter-spacing: 0; }
+    h2 { margin: 0; font-size: 20px; line-height: 1.2; letter-spacing: 0; }
+    h3 { margin: 10px 0 8px; font-size: 18px; line-height: 1.25; letter-spacing: 0; }
+    h4 { margin: 0; font-size: 13px; letter-spacing: 0; }
     p { margin: 0; color: var(--muted); }
     a { color: var(--blue); text-decoration-thickness: 1px; text-underline-offset: 3px; }
-    .subtitle { margin-top: 8px; max-width: 760px; }
     .header-row { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
     .actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-    .dashboard-grid { display: grid; gap: 16px; }
-    .history-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
-    .panel, .note-card { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
-    .panel { padding: 16px; }
-    .note-card { padding: 14px; display: grid; gap: 8px; }
-    .note-card-header, .summary-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--muted); font-size: 13px; }
+    .eyebrow { color: var(--violet); font-size: 12px; font-weight: 800; text-transform: uppercase; }
+    .dashboard-grid { display: grid; gap: 16px; max-width: 1280px; margin: 0 auto; }
+    .overview-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(128px, .45fr)); gap: 12px; }
+    .latest-card, .metric-card, .run-stack { border: 1px solid var(--line); border-radius: 8px; background: linear-gradient(180deg, rgba(29,31,37,.96), rgba(18,19,24,.96)); box-shadow: 0 18px 70px rgba(0,0,0,.25); }
+    .latest-card { padding: 18px; min-height: 184px; display: grid; align-content: start; gap: 10px; }
+    .latest-card.empty { align-content: center; }
+    .metric-card { padding: 16px; display: grid; align-content: space-between; min-height: 118px; }
+    .metric-card span { color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; }
+    .metric-card strong { font-size: 30px; line-height: 1; }
+    .stack-list { display: grid; gap: 12px; }
+    .run-stack { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(300px, .9fr); overflow: hidden; }
+    .run-main { padding: 16px; display: grid; gap: 10px; border-right: 1px solid var(--line); }
+    .attached-list { padding: 14px; display: grid; gap: 10px; background: rgba(255,255,255,.025); }
+    .attached-note { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: 12px; border: 1px solid #25262c; border-radius: 8px; background: #101116; }
+    .attached-note h4 { margin-top: 5px; font-size: 14px; }
+    .attached-note p { margin-top: 4px; font-size: 13px; }
+    .note-card-header, .note-row-meta, .section-title-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; }
+    .section-title-row { justify-content: space-between; color: var(--ink); }
+    .section-title-row span { color: var(--muted); }
+    .stack-heading { margin-bottom: 10px; }
     .status, .kind { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); font-weight: 700; }
-    .kind { color: #2f405c; background: #eef2f7; border-color: #cbd5e1; text-transform: capitalize; }
-    .status-complete { color: var(--green); background: #eef8f1; border-color: #b7dfc2; }
-    .status-risk { color: var(--red); background: #fff0ee; border-color: #f5c3bd; }
-    .status-active { color: var(--amber); background: #fff7df; border-color: #ead189; }
-    .meta-grid { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 4px 10px; margin: 12px 0 0; font-size: 13px; }
-    .meta-grid dt { color: var(--muted); font-weight: 700; }
-    .meta-grid dd { margin: 0; overflow-wrap: anywhere; }
-    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 7px 12px; border-radius: 7px; border: 1px solid var(--blue); background: var(--blue); color: #ffffff; font-weight: 700; text-decoration: none; }
-    .button.secondary { justify-self: start; border-color: var(--line); background: #ffffff; color: var(--blue); }
-    .button.danger { border-color: #f0c4bf; background: #fff7f6; color: var(--red); cursor: pointer; }
+    .kind { color: var(--blue); background: rgba(139,211,255,.08); border-color: rgba(139,211,255,.3); text-transform: capitalize; }
+    .status-complete { color: var(--green); background: rgba(119,217,154,.08); border-color: rgba(119,217,154,.35); }
+    .status-risk { color: var(--red); background: rgba(255,123,114,.08); border-color: rgba(255,123,114,.35); }
+    .status-active { color: var(--amber); background: rgba(244,201,93,.08); border-color: rgba(244,201,93,.35); }
+    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 7px 12px; border-radius: 7px; border: 1px solid rgba(139,211,255,.45); background: var(--blue); color: #071016; font-weight: 800; text-decoration: none; }
+    .button.secondary, .button.ghost { justify-self: start; border-color: var(--line); background: #0d0e12; color: var(--ink); }
+    .button.ghost { color: var(--blue); }
+    .button.danger { border-color: rgba(255,123,114,.35); background: rgba(255,123,114,.08); color: var(--red); cursor: pointer; }
     .card-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .inline-actions { display: flex; gap: 8px; align-items: start; }
+    .text-link, .text-danger { border: 0; padding: 0; background: transparent; color: var(--blue); font: inherit; font-size: 12px; font-weight: 800; text-decoration: none; cursor: pointer; }
+    .text-danger { color: var(--red); }
     form { margin: 0; }
-    .empty { color: var(--muted); }
-    @media (max-width: 760px) { header { padding: 20px 16px 14px; } main { padding: 16px; } .header-row { display: grid; } .actions { justify-content: flex-start; } }
+    .muted { color: var(--muted); }
+    .small { font-size: 13px; }
+    @media (max-width: 980px) { .overview-grid { grid-template-columns: 1fr 1fr; } .latest-card { grid-column: 1 / -1; } .run-stack { grid-template-columns: 1fr; } .run-main { border-right: 0; border-bottom: 1px solid var(--line); } }
+    @media (max-width: 760px) { header { padding: 16px; } main { padding: 14px; } .header-row { display: grid; } .actions { justify-content: flex-start; } .overview-grid { grid-template-columns: 1fr; } .attached-note { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
   <header>
     <div class="header-row">
       <div>
-        <h1>Loop Wiki</h1>
-        <p class="subtitle">Local second brain for delegated agent work. Read the latest note and scan run history without opening raw files.</p>
+        <p class="eyebrow">Loop Wiki</p>
+        <h1>Second Brain</h1>
       </div>
       <nav class="actions" aria-label="Wiki views">
         <a class="button" href="/graph">Graph View</a>
@@ -1373,24 +1441,15 @@ export function renderWikiDashboardHtml(notes) {
   </header>
   <main>
     <section class="dashboard-grid">
-      <section class="panel">
-        <h2>Current Reading Context</h2>
-        ${recent ? `
-          <div class="summary-row">
-            <span class="kind">${escapeHtml(recent.kind)}</span>
-            <span class="status ${statusClass(recent.status)}">${escapeHtml(recent.status)}</span>
-            <span>${escapeHtml(recent.phase)}</span>
-            <span>${escapeHtml(sessionLabel(recent.session))}</span>
-            <span>${escapeHtml(recent.updatedAt)}</span>
-          </div>
-          <h3>${escapeHtml(recent.title)}</h3>
-          <p>${escapeHtml(recent.summary)}</p>
-          <p style="margin-top: 12px;"><a class="button secondary" href="/notes/${encodeURIComponent(recent.id)}">Read current note</a></p>
-        ` : "<p class=\"empty\">No notes yet.</p>"}
+      <section class="overview-grid">
+        ${latest}
+        <div class="metric-card"><span>Runs</span><strong>${runNotes.length}</strong></div>
+        <div class="metric-card"><span>Attached</span><strong>${attachedNotes.length}</strong></div>
+        <div class="metric-card"><span>Total</span><strong>${notes.length}</strong></div>
       </section>
       <section>
-        <h2>History Stack</h2>
-        <div class="history-grid">${cards}</div>
+        <div class="section-title-row stack-heading"><h2>Loop Stack</h2><span>${notes.length} notes</span></div>
+        <div class="stack-list">${stackHtml}</div>
       </section>
     </section>
   </main>
@@ -1418,37 +1477,43 @@ export function renderWikiGraphHtml(notes) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Loop Wiki Graph</title>
   <style>
-    :root { color-scheme: light; --ink: #16181d; --muted: #596070; --line: #d9dee8; --panel: #ffffff; --page: #f5f7fa; --blue: #1f5fbf; --green: #1f7a4d; --red: #b42318; --amber: #9a6700; }
+    :root { color-scheme: dark; --ink: #f4f0e8; --muted: #9da0a6; --line: #2a2b31; --panel: #15161a; --page: #07080b; --blue: #8bd3ff; --green: #77d99a; --red: #ff7b72; --amber: #f4c95d; --violet: #c9a7ff; }
     * { box-sizing: border-box; }
     body { margin: 0; min-height: 100vh; font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); background: var(--page); }
-    header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; padding: 22px 28px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+    header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; padding: 18px 28px; border-bottom: 1px solid var(--line); background: rgba(7,8,11,.94); backdrop-filter: blur(14px); }
     h1 { margin: 0; font-size: 26px; line-height: 1.1; }
     h2 { margin: 0 0 12px; font-size: 16px; }
     p { margin: 6px 0 0; color: var(--muted); }
     a { color: var(--blue); text-decoration-thickness: 1px; text-underline-offset: 3px; }
-    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 7px 12px; border-radius: 7px; border: 1px solid var(--line); background: #ffffff; color: var(--blue); font-weight: 700; text-decoration: none; }
-    main { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; padding: 16px 28px 28px; }
+    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 7px 12px; border-radius: 7px; border: 1px solid var(--line); background: #0d0e12; color: var(--blue); font-weight: 800; text-decoration: none; }
+    main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; padding: 16px 28px 28px; }
     .graph-stage, .side-panel { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
-    .graph-stage { min-height: 68vh; overflow: hidden; background: #fbfcfe; }
+    .graph-stage { min-height: 72vh; overflow: hidden; background-color: #08090d; background-image: linear-gradient(rgba(255,255,255,.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.04) 1px, transparent 1px); background-size: 34px 34px; }
     .side-panel { padding: 16px; align-self: start; }
-    svg { display: block; width: 100%; min-height: 68vh; }
-    .graph-edge { stroke: #9babc2; stroke-width: 1.3; }
-    .graph-node circle { fill: #ffffff; stroke: var(--blue); stroke-width: 2.4; filter: url(#nodeGlow); }
-    .graph-node.status-complete circle { stroke: var(--green); }
+    svg { display: block; width: 100%; min-height: 72vh; }
+    .graph-edge { stroke: rgba(157,160,166,.55); stroke-width: 1.2; }
+    .graph-edge-supports { stroke: rgba(139,211,255,.58); }
+    .graph-edge-continues { stroke: rgba(201,167,255,.55); stroke-dasharray: 5 5; }
+    .graph-node circle { fill: #11141b; stroke: var(--blue); stroke-width: 2.2; filter: url(#nodeGlow); }
+    .graph-kind-run circle { fill: url(#runNode); stroke: #f4f0e8; }
+    .graph-kind-plan circle { stroke: var(--blue); }
+    .graph-kind-verification circle { stroke: var(--green); }
+    .graph-kind-idea circle { stroke: var(--violet); }
+    .graph-kind-decision circle { stroke: var(--amber); }
+    .graph-kind-reference circle { stroke: #f59e9e; }
+    .graph-node.status-complete circle { stroke-width: 2.6; }
     .graph-node.status-risk circle { stroke: var(--red); }
-    .graph-node.status-active circle { stroke: var(--amber); }
-    .graph-node text { fill: var(--ink); font-size: 11px; pointer-events: none; }
+    .graph-node text { fill: var(--ink); font-size: 11px; pointer-events: none; paint-order: stroke; stroke: #07080b; stroke-width: 4px; stroke-linejoin: round; }
     .empty, li { color: var(--muted); }
     ul { margin: 0; padding-left: 18px; }
     li { margin: 7px 0; }
-    @media (max-width: 880px) { header { display: grid; padding: 18px 16px 12px; } main { grid-template-columns: 1fr; padding: 16px; } .graph-stage, svg { min-height: 460px; } }
+    @media (max-width: 880px) { header { display: grid; padding: 16px; } main { grid-template-columns: 1fr; padding: 14px; } .graph-stage, svg { min-height: 520px; } }
   </style>
 </head>
 <body>
   <header>
     <div>
       <h1>Graph View</h1>
-      <p>Notes are dots. Lines show continued runs and supporting artifacts. Click a dot to open the note.</p>
     </div>
     <a class="button" href="/">Back to notes</a>
   </header>
@@ -1483,27 +1548,27 @@ export function renderMarkdownHtml(markdown, { noteId } = {}) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Loop Wiki Note</title>
   <style>
-    :root { --ink: #17191f; --muted: #596070; --line: #d9dee8; --panel: #ffffff; --page: #f6f7fa; --blue: #1f5fbf; }
+    :root { color-scheme: dark; --ink: #f4f0e8; --muted: #9da0a6; --line: #2a2b31; --panel: #15161a; --page: #090a0d; --blue: #8bd3ff; --red: #ff7b72; }
     * { box-sizing: border-box; }
     body { margin: 0; font: 16px/1.65 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); background: var(--page); }
     main { max-width: 940px; margin: 0 auto; padding: 28px 20px 64px; }
-    article { border: 1px solid var(--line); border-radius: 8px; padding: 28px; background: var(--panel); }
+    article { border: 1px solid var(--line); border-radius: 8px; padding: 28px; background: var(--panel); box-shadow: 0 18px 70px rgba(0,0,0,.28); }
     h1 { margin: 0 0 12px; font-size: 32px; line-height: 1.15; }
     h2 { margin: 30px 0 10px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 21px; }
     h3 { margin: 20px 0 8px; font-size: 18px; }
     p { margin: 10px 0; }
-    blockquote { margin: 14px 0; padding: 10px 14px; border-left: 4px solid var(--blue); background: #eef4ff; color: #26364f; }
+    blockquote { margin: 14px 0; padding: 10px 14px; border-left: 4px solid var(--blue); background: rgba(139,211,255,.08); color: var(--ink); }
     ul { padding-left: 22px; }
     li { margin: 5px 0; }
     table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
     th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
-    th { background: #f0f3f8; }
-    code { padding: 1px 5px; border-radius: 5px; background: #eef1f6; }
-    pre { padding: 14px; border-radius: 8px; overflow-x: auto; background: #111827; color: #f8fafc; }
+    th { background: #20222a; }
+    code { padding: 1px 5px; border-radius: 5px; background: #20222a; }
+    pre { padding: 14px; border-radius: 8px; overflow-x: auto; background: #050609; color: #f8fafc; }
     a { color: var(--blue); text-underline-offset: 3px; }
     .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 7px 12px; border-radius: 7px; border: 1px solid var(--line); background: #ffffff; color: var(--blue); font-weight: 700; text-decoration: none; }
-    .button.danger { border-color: #f0c4bf; background: #fff7f6; color: #b42318; cursor: pointer; }
+    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 7px 12px; border-radius: 7px; border: 1px solid var(--line); background: #0d0e12; color: var(--blue); font-weight: 800; text-decoration: none; }
+    .button.danger { border-color: rgba(255,123,114,.35); background: rgba(255,123,114,.08); color: var(--red); cursor: pointer; }
     form { margin: 0; }
     @media (max-width: 760px) { main { padding: 14px; } article { padding: 18px; } h1 { font-size: 26px; } }
   </style>
@@ -1526,15 +1591,15 @@ export function renderRunLogHtml({ id, log }) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Loop Run Log</title>
   <style>
-    :root { --ink: #17191f; --muted: #596070; --line: #d9dee8; --panel: #ffffff; --page: #f6f7fa; --blue: #1f5fbf; }
+    :root { color-scheme: dark; --ink: #f4f0e8; --muted: #9da0a6; --line: #2a2b31; --panel: #15161a; --page: #090a0d; --blue: #8bd3ff; }
     * { box-sizing: border-box; }
     body { margin: 0; font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); background: var(--page); }
     main { max-width: 1100px; margin: 0 auto; padding: 24px 18px 48px; }
     header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 12px; }
     h1 { margin: 0; font-size: 24px; line-height: 1.2; overflow-wrap: anywhere; }
     p { margin: 6px 0 0; color: var(--muted); }
-    pre { margin: 0; min-height: 62vh; padding: 16px; border: 1px solid var(--line); border-radius: 8px; overflow: auto; background: #111827; color: #f8fafc; white-space: pre-wrap; }
-    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 7px 12px; border-radius: 7px; border: 1px solid var(--line); background: #ffffff; color: var(--blue); font-weight: 700; text-decoration: none; white-space: nowrap; }
+    pre { margin: 0; min-height: 62vh; padding: 16px; border: 1px solid var(--line); border-radius: 8px; overflow: auto; background: #050609; color: #f8fafc; white-space: pre-wrap; }
+    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 7px 12px; border-radius: 7px; border: 1px solid var(--line); background: #0d0e12; color: var(--blue); font-weight: 800; text-decoration: none; white-space: nowrap; }
   </style>
 </head>
 <body>

@@ -63,7 +63,8 @@ test("CLI wiki list and read expose dry-run notes", async () => {
 
   assert.match(list, new RegExp(parsed.wikiPaths.id));
   assert.match(read, /# Wiki maintenance/);
-  assert.match(read, /## Token Usage/);
+  assert.doesNotMatch(read, /## Token Usage/);
+  assert.doesNotMatch(read, /## Related Notes/);
 });
 
 test("CLI wiki add attaches supporting notes to a loop run", async () => {
