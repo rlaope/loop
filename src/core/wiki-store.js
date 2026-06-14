@@ -9,7 +9,7 @@ const GRAPH_FILE = "graph.json";
 
 /**
  * @typedef {{ input: number | null, output: number | null, total: number | null, source: "agent-reported" | "estimated" | "unknown" }} WikiTokenUsage
- * @typedef {{ target: string, relationship: string, reason: string }} WikiLink
+ * @typedef {{ target: string, relationship: string, reason: string, title?: string, summary?: string, updatedAt?: string, status?: string, phase?: string }} WikiLink
  * @typedef {{ jsonPath?: string, summaryPath?: string }} WikiRunPaths
  * @typedef {{ agent?: string, status?: string, pid?: number | null, startedAt?: string, endedAt?: string | null, logPath?: string }} WikiSession
  * @typedef {{ id: string, runId?: string, title: string, objective: string, objectiveSlug: string, status: string, phase: string, canonicalNote: string, aiMemory: string, createdAt: string, updatedAt: string, summary: string, tags: string[], links: WikiLink[], tokens: WikiTokenUsage, session?: WikiSession | null }} WikiIndexEntry
@@ -201,7 +201,12 @@ export async function readWikiIndex({ stateDir = DEFAULT_STATE_DIR } = {}) {
           ? entry.links.filter(isRecord).map((link) => ({
               target: String(link.target ?? ""),
               relationship: String(link.relationship ?? ""),
-              reason: String(link.reason ?? "")
+              reason: String(link.reason ?? ""),
+              title: typeof link.title === "string" ? link.title : undefined,
+              summary: typeof link.summary === "string" ? link.summary : undefined,
+              updatedAt: typeof link.updatedAt === "string" ? link.updatedAt : undefined,
+              status: typeof link.status === "string" ? link.status : undefined,
+              phase: typeof link.phase === "string" ? link.phase : undefined
             }))
           : [],
         tokens: normalizeTokens(entry.tokens),
@@ -361,6 +366,29 @@ function linkTargetId(link) {
   return filename.endsWith(".md") ? filename.slice(0, -3) : filename;
 }
 
+/** @param {string | undefined} value */
+function readableTimestamp(value) {
+  if (!value) {
+    return "unknown time";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+/** @param {WikiLink} link */
+function relatedNoteTitle(link) {
+  return truncateText(stripMarkdown(link.title || "Previous Loop note"), 84);
+}
+
+/** @param {WikiLink} link */
+function relatedNoteSummary(link) {
+  const status = link.status && link.phase ? `${link.status}/${link.phase}` : link.status || link.phase || "previous run";
+  return `${status}, updated ${readableTimestamp(link.updatedAt)}.`;
+}
+
 /**
  * @param {WikiIndex} index
  * @param {import("./run-state.js").LoopRunState} state
@@ -370,11 +398,16 @@ function linkTargetId(link) {
 function relatedLinks(index, state, id) {
   return index.notes
     .filter((note) => note.id !== id && note.objectiveSlug === state.objectiveSlug)
-    .slice(-5)
+    .slice(0, 5)
     .map((note) => ({
       target: `../user/${note.id}.md`,
       relationship: "continues",
-      reason: "Earlier Loop Wiki note for the same objective."
+      reason: "Earlier Loop Wiki note for the same objective.",
+      title: note.title,
+      summary: note.summary,
+      updatedAt: note.updatedAt,
+      status: note.status,
+      phase: note.phase
     }));
 }
 
@@ -393,7 +426,7 @@ export function renderWikiNote(state, { id, links, paths = {} }) {
     : flags.map((flag) => `- ${flag.severity}: ${flag.kind} - ${flag.text}`).join("\n");
   const linkText = links.length === 0
     ? "No related notes yet."
-    : links.map((link) => `- [${link.relationship}: previous note ${linkTargetId(link)}](${link.target}) - ${link.reason}`).join("\n");
+    : links.map((link) => `- ${relatedNoteTitle(link)} - ${relatedNoteSummary(link)}`).join("\n");
   const decisions = decisionEntries(state);
   const decisionText = decisions
     .map((entry) => `- ${entry.decision} ${entry.rationale}`)
@@ -460,7 +493,11 @@ export function renderWikiNote(state, { id, links, paths = {} }) {
     "",
     links.length === 0
       ? "This note has no graph edges yet. Future runs with the same objective slug will appear here."
-      : links.map((link) => `- ${id} --${link.relationship}--> ${linkTargetId(link)}: ${link.reason}`).join("\n"),
+      : [
+          `This note continues ${links.length} earlier note${links.length === 1 ? "" : "s"} for the same objective. Open Graph View for the full map.`,
+          "",
+          ...links.map((link) => `- ${link.relationship}: ${relatedNoteTitle(link)}`)
+        ].join("\n"),
     "",
     "## Token Usage",
     "",

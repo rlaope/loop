@@ -148,13 +148,22 @@ test("links previous notes with the same objective slug", async () => {
 
   await writeWikiForRunState(first, { stateDir, now: new Date("2026-06-13T08:01:00.000Z") });
   const secondPaths = await writeWikiForRunState(second, { stateDir, now: new Date("2026-06-13T09:01:00.000Z") });
+  const note = await readWikiNote(secondPaths.id, { stateDir });
   const memory = JSON.parse(await readFile(secondPaths.memoryPath, "utf8"));
   const graph = JSON.parse(await readFile(secondPaths.graphPath, "utf8"));
 
   assert.equal(memory.graph.links.length, 1);
   assert.equal(memory.graph.links[0].relationship, "continues");
+  assert.equal(memory.graph.links[0].title, "Same wiki objective");
   assert.equal(graph.edges.length, 1);
   assert.equal(graph.edges[0].target, noteIdForRunState(first));
+  assert.match(note.markdown, /- Same wiki objective - active\/intake/);
+  assert.match(note.markdown, /- continues: Same wiki objective/);
+  assert.match(note.markdown, /This note continues 1 earlier note for the same objective/);
+  assert.match(note.markdown, /Open Graph View for the full map/);
+  assert.doesNotMatch(note.markdown, /\.\.\/user\//);
+  assert.doesNotMatch(note.markdown, /previous note 2026-/);
+  assert.doesNotMatch(note.markdown, /--continues-->/);
 });
 
 test("renders markdown notes as readable semantic HTML", () => {
