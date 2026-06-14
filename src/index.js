@@ -29,7 +29,8 @@ export {
   renderWikiList,
   renderWikiNote,
   wikiNotePath,
-  writeWikiForRunState
+  writeWikiForRunState,
+  writeWikiSupportingNote
 } from "./core/wiki-store.js";
 export {
   DEFAULT_WIKI_HOST,
@@ -60,6 +61,7 @@ export function printHelp(stream) {
   stream.write(`  loop runs [delete <run-id>]\n`);
   stream.write(`  loop logs [run-id] [--follow]\n`);
   stream.write(`  loop wiki [list|read <id>|open <id>|delete <id>|serve]\n`);
+  stream.write(`  loop wiki add --kind plan --title "<title>" --body "<note>" [--run <run-id>]\n`);
   stream.write(`  loop --dry-run --objective "<objective>" [--state-dir .loop]\n`);
   stream.write(`\n`);
   stream.write(`Run without cloning:\n`);
@@ -76,6 +78,12 @@ export function printHelp(stream) {
   stream.write(`  --wiki-dashboard  Start the local Loop Wiki dashboard during run mode.\n`);
   stream.write(`  --port           Port for Loop Wiki dashboard. Defaults to 3846.\n`);
   stream.write(`  --follow         Keep streaming a run log in loop logs.\n`);
+  stream.write(`  --kind           Wiki note type for loop wiki add: plan, verification, idea, decision, reference, or note.\n`);
+  stream.write(`  --title          Wiki note title for loop wiki add.\n`);
+  stream.write(`  --body           Wiki note body for loop wiki add.\n`);
+  stream.write(`  --run            Attach a wiki note to the run note for this run id.\n`);
+  stream.write(`  --parent         Attach a wiki note to a specific parent wiki note id.\n`);
+  stream.write(`  --stdin          Read loop wiki add body from standard input.\n`);
   stream.write(`  --isolation      Write isolation mode: branch, worktree, or local.\n`);
   stream.write(`  --acknowledge-local  Explicitly acknowledge local-mode write risk.\n`);
   stream.write(`  --expected-root  Expected git root for write-capable runs. Defaults to cwd.\n`);

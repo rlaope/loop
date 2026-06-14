@@ -58,8 +58,8 @@ Loop is built around six working components:
 - A dry-run CLI path that writes state without changing source files.
 - A `loop run` command that can hand an objective to Codex or Claude Code after
   agent selection and optional goal clarification.
-- `loop wiki` commands for listing, reading, opening, and serving local
-  human-readable run notes.
+- `loop wiki` commands for listing, reading, opening, serving, deleting, and
+  adding local second-brain notes.
 
 ## Quickstart
 
@@ -149,11 +149,25 @@ loop wiki
 ```
 
 `loop wiki` starts and opens a localhost-only dashboard for `.loop/wiki`. The
-markdown note under `.loop/wiki/user` is canonical; AI memory, index, and graph
-files are derived from it. `loop run` does not start the dashboard in
+main run note under `.loop/wiki/user` is canonical for the loop session; AI
+memory, index, and graph files are derived from the local wiki. `loop run` does
+not start the dashboard in
 non-interactive automation unless `--wiki-dashboard` is passed. Most users can
 ignore that flag and open the dashboard later with `loop wiki`. The dashboard
 also includes note delete buttons and links from each note to the run log.
+
+A loop is not limited to one markdown file. The run note is the parent context,
+and you can attach multiple implementation plans, verification findings,
+decisions, references, or ideas to the same run:
+
+```sh
+loop wiki add --kind plan --title "Implementation plan" --body "Build the gallery first, then verify responsive spacing."
+loop wiki add --kind verification --title "QA findings" --body "Mobile product cards need another pass."
+loop wiki add --kind idea --title "Curation angle" --body "Group pieces by silhouette instead of brand."
+```
+
+If you need to attach a note to a specific session, pass `--run <run-id>`. If
+you omit it, Loop attaches the new note to the latest run note in the local wiki.
 
 To remove a run-state session and its captured log:
 

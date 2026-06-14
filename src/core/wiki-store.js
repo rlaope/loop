@@ -9,10 +9,10 @@ const GRAPH_FILE = "graph.json";
 
 /**
  * @typedef {{ input: number | null, output: number | null, total: number | null, source: "agent-reported" | "estimated" | "unknown" }} WikiTokenUsage
- * @typedef {{ target: string, relationship: string, reason: string, title?: string, summary?: string, updatedAt?: string, status?: string, phase?: string }} WikiLink
+ * @typedef {{ target: string, relationship: string, reason: string, title?: string, summary?: string, updatedAt?: string, status?: string, phase?: string, kind?: string }} WikiLink
  * @typedef {{ jsonPath?: string, summaryPath?: string }} WikiRunPaths
  * @typedef {{ agent?: string, status?: string, pid?: number | null, startedAt?: string, endedAt?: string | null, logPath?: string }} WikiSession
- * @typedef {{ id: string, runId?: string, title: string, objective: string, objectiveSlug: string, status: string, phase: string, canonicalNote: string, aiMemory: string, createdAt: string, updatedAt: string, summary: string, tags: string[], links: WikiLink[], tokens: WikiTokenUsage, session?: WikiSession | null }} WikiIndexEntry
+ * @typedef {{ id: string, runId?: string, kind: string, parentId?: string, parentTitle?: string, title: string, objective: string, objectiveSlug: string, status: string, phase: string, canonicalNote: string, aiMemory: string, createdAt: string, updatedAt: string, summary: string, tags: string[], links: WikiLink[], tokens: WikiTokenUsage, session?: WikiSession | null }} WikiIndexEntry
  * @typedef {{ version: 1, updatedAt: string, notes: WikiIndexEntry[] }} WikiIndex
  */
 
@@ -147,6 +147,47 @@ export function noteIdForRunState(state) {
   return id;
 }
 
+const SUPPORTING_NOTE_KINDS = new Set(["plan", "verification", "idea", "decision", "reference", "note"]);
+
+/**
+ * @param {string | undefined} value
+ */
+function normalizeWikiKind(value) {
+  const normalized = String(value || "note")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (!normalized || normalized === "run") {
+    return "note";
+  }
+  return SUPPORTING_NOTE_KINDS.has(normalized) ? normalized : "note";
+}
+
+/**
+ * @param {string} value
+ */
+function slugifyWikiTitle(value) {
+  const slug = value
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return slug || "note";
+}
+
+/**
+ * @param {{ parentId: string, kind: string, title: string, body: string, now: Date }} input
+ */
+function noteIdForSupportingNote({ parentId, kind, title, body, now }) {
+  const nowIso = now.toISOString();
+  const id = `${datePart(nowIso)}-${kind}-${slugifyWikiTitle(title)}-${compactTimestamp(nowIso)}Z-${shortHash(`${parentId}:${kind}:${title}:${body}:${nowIso}`)}`;
+  assertSafeId(id);
+  return id;
+}
+
 /**
  * @param {{ stateDir?: string, id: string }} options
  */
@@ -186,6 +227,9 @@ export async function readWikiIndex({ stateDir = DEFAULT_STATE_DIR } = {}) {
       notes: parsed.notes.filter(isRecord).map((entry) => ({
         id: String(entry.id ?? ""),
         runId: typeof entry.runId === "string" ? entry.runId : undefined,
+        kind: typeof entry.kind === "string" ? entry.kind : "run",
+        parentId: typeof entry.parentId === "string" ? entry.parentId : undefined,
+        parentTitle: typeof entry.parentTitle === "string" ? entry.parentTitle : undefined,
         title: String(entry.title ?? ""),
         objective: String(entry.objective ?? ""),
         objectiveSlug: String(entry.objectiveSlug ?? ""),
@@ -206,7 +250,8 @@ export async function readWikiIndex({ stateDir = DEFAULT_STATE_DIR } = {}) {
               summary: typeof link.summary === "string" ? link.summary : undefined,
               updatedAt: typeof link.updatedAt === "string" ? link.updatedAt : undefined,
               status: typeof link.status === "string" ? link.status : undefined,
-              phase: typeof link.phase === "string" ? link.phase : undefined
+              phase: typeof link.phase === "string" ? link.phase : undefined,
+              kind: typeof link.kind === "string" ? link.kind : undefined
             }))
           : [],
         tokens: normalizeTokens(entry.tokens),
@@ -379,7 +424,7 @@ function relatedNoteTitle(link) {
  */
 function relatedLinks(index, state, id) {
   return index.notes
-    .filter((note) => note.id !== id && note.objectiveSlug === state.objectiveSlug)
+    .filter((note) => note.id !== id && note.objectiveSlug === state.objectiveSlug && note.kind === "run")
     .slice(0, 5)
     .map((note) => ({
       target: `../user/${note.id}.md`,
@@ -389,8 +434,38 @@ function relatedLinks(index, state, id) {
       summary: note.summary,
       updatedAt: note.updatedAt,
       status: note.status,
-      phase: note.phase
+      phase: note.phase,
+      kind: note.kind
     }));
+}
+
+/** @param {WikiIndexEntry} note */
+function isRunNote(note) {
+  return note.kind === "run";
+}
+
+/**
+ * @param {WikiIndex} index
+ * @param {{ runId?: string, parentId?: string }} options
+ * @returns {WikiIndexEntry | null}
+ */
+function resolveSupportingParent(index, { runId, parentId }) {
+  if (parentId) {
+    const candidate = index.notes.find((note) => note.id === parentId);
+    if (!candidate) {
+      return null;
+    }
+    if (isRunNote(candidate) || !candidate.parentId) {
+      return candidate;
+    }
+    return index.notes.find((note) => note.id === candidate.parentId) ?? candidate;
+  }
+  if (runId) {
+    return index.notes.find((note) => note.runId === runId && isRunNote(note))
+      ?? index.notes.find((note) => note.runId === runId)
+      ?? null;
+  }
+  return index.notes.find(isRunNote) ?? index.notes[0] ?? null;
 }
 
 /**
@@ -568,6 +643,75 @@ function buildAiMemory(state, { id, noteRelativePath, markdown, markdownHash, ge
 }
 
 /**
+ * @param {{ kind: string, title: string, body: string, parent: WikiIndexEntry, links: WikiLink[] }} input
+ */
+function renderSupportingWikiNote({ kind, title, body, parent, links }) {
+  const linkText = links.length === 0
+    ? "No graph links recorded."
+    : links.map((link) => `- ${relatedNoteTitle(link)}`).join("\n");
+  return [
+    `# ${title}`,
+    "",
+    `> Loop Wiki ${kind} note`,
+    "",
+    "## Context",
+    "",
+    `- Type: ${kind}`,
+    `- Parent loop: ${parent.title}`,
+    `- Objective: ${parent.objective}`,
+    "",
+    "## Note",
+    "",
+    body.trim(),
+    "",
+    "## How It Connects",
+    "",
+    `This note supports the parent loop by preserving a separate ${kind} artifact instead of folding it into the main run note.`,
+    "",
+    "## Related Notes",
+    "",
+    linkText,
+    ""
+  ].join("\n");
+}
+
+/**
+ * @param {{ id: string, kind: string, parent: WikiIndexEntry, title: string, body: string, noteRelativePath: string, markdown: string, links: WikiLink[], nowIso: string }} input
+ */
+function buildSupportingAiMemory({ id, kind, parent, title, body, noteRelativePath, markdown, links, nowIso }) {
+  return {
+    version: 1,
+    id,
+    kind,
+    parentId: parent.id,
+    parentTitle: parent.title,
+    parentRunId: parent.runId ?? null,
+    canonicalNote: noteRelativePath,
+    derivedFromHash: hashText(markdown),
+    generator: {
+      markdownHash: hashText(markdown),
+      source: "loop-supporting-note"
+    },
+    runIds: parent.runId ? [parent.runId] : [],
+    objective: parent.objective,
+    objectiveSlug: parent.objectiveSlug,
+    title,
+    summary: shortSummaryFromMarkdown(markdown),
+    body,
+    status: parent.status,
+    phase: parent.phase,
+    session: parent.session ?? null,
+    graph: {
+      tags: ["loop-wiki", kind, parent.objectiveSlug],
+      links
+    },
+    tokens: unknownTokenUsage(),
+    createdAt: nowIso,
+    updatedAt: nowIso
+  };
+}
+
+/**
  * @param {string} memoryPath
  */
 async function readPreviousGeneratedMarkdownHash(memoryPath) {
@@ -637,6 +781,8 @@ function buildGraph(index, now) {
       id: note.id,
       label: note.title,
       path: note.canonicalNote,
+      kind: note.kind,
+      parentId: note.parentId,
       status: note.status,
       tags: note.tags
     })),
@@ -689,6 +835,7 @@ export async function writeWikiForRunState(state, { stateDir = DEFAULT_STATE_DIR
   const entry = {
     id,
     runId: state.id,
+    kind: "run",
     title: state.objective,
     objective: state.objective,
     objectiveSlug: state.objectiveSlug,
@@ -714,6 +861,120 @@ export async function writeWikiForRunState(state, { stateDir = DEFAULT_STATE_DIR
     memoryPath,
     indexPath,
     graphPath
+  };
+}
+
+/**
+ * @param {{ stateDir?: string, runId?: string, parentId?: string, kind?: string, title: string, body: string, now?: Date }} options
+ */
+export async function writeWikiSupportingNote({
+  stateDir = DEFAULT_STATE_DIR,
+  runId,
+  parentId,
+  kind,
+  title,
+  body,
+  now = new Date()
+}) {
+  const trimmedTitle = title.trim();
+  const trimmedBody = body.trim();
+  if (!trimmedTitle) {
+    throw new Error("Supporting wiki note title is required");
+  }
+  if (!trimmedBody) {
+    throw new Error("Supporting wiki note body is required");
+  }
+
+  const normalizedKind = normalizeWikiKind(kind);
+  const { root, userDir, aiDir, indexPath, graphPath } = wikiPath(stateDir);
+  await mkdir(userDir, { recursive: true });
+  await mkdir(aiDir, { recursive: true });
+
+  const index = await readWikiIndex({ stateDir });
+  const parent = resolveSupportingParent(index, { runId, parentId });
+  if (!parent) {
+    throw new Error("No Loop Wiki run note found; run loop first or pass --run/--parent");
+  }
+
+  const nowIso = now.toISOString();
+  const id = noteIdForSupportingNote({
+    parentId: parent.id,
+    kind: normalizedKind,
+    title: trimmedTitle,
+    body: trimmedBody,
+    now
+  });
+  const notePath = wikiNotePath({ stateDir, id });
+  const memoryPath = wikiMemoryPath({ stateDir, id });
+  const noteRelativePath = relative(aiDir, notePath);
+  const aiRelativeFromRoot = relative(root, memoryPath);
+  const noteRelativeFromRoot = relative(root, notePath);
+  const links = [{
+    target: `../user/${parent.id}.md`,
+    relationship: "supports",
+    reason: `Supporting ${normalizedKind} note for this Loop run.`,
+    title: parent.title,
+    summary: parent.summary,
+    updatedAt: parent.updatedAt,
+    status: parent.status,
+    phase: parent.phase,
+    kind: parent.kind
+  }];
+  const markdown = renderSupportingWikiNote({
+    kind: normalizedKind,
+    title: trimmedTitle,
+    body: trimmedBody,
+    parent,
+    links
+  });
+  const memory = buildSupportingAiMemory({
+    id,
+    kind: normalizedKind,
+    parent,
+    title: trimmedTitle,
+    body: trimmedBody,
+    noteRelativePath,
+    markdown,
+    links,
+    nowIso
+  });
+
+  await writeFile(notePath, markdown);
+  await writeFile(memoryPath, `${JSON.stringify(memory, null, 2)}\n`);
+
+  const entry = {
+    id,
+    runId: parent.runId,
+    kind: normalizedKind,
+    parentId: parent.id,
+    parentTitle: parent.title,
+    title: trimmedTitle,
+    objective: parent.objective,
+    objectiveSlug: parent.objectiveSlug,
+    status: parent.status,
+    phase: parent.phase,
+    canonicalNote: noteRelativeFromRoot,
+    aiMemory: aiRelativeFromRoot,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    summary: memory.summary,
+    tags: memory.graph.tags,
+    links,
+    tokens: memory.tokens,
+    session: memory.session
+  };
+  const nextIndex = upsertIndexEntry(index, entry, nowIso);
+  await writeFile(indexPath, `${JSON.stringify(nextIndex, null, 2)}\n`);
+  await writeFile(graphPath, `${JSON.stringify(buildGraph(nextIndex, nowIso), null, 2)}\n`);
+
+  return {
+    id,
+    kind: normalizedKind,
+    notePath,
+    memoryPath,
+    indexPath,
+    graphPath,
+    parentId: parent.id
   };
 }
 
@@ -767,9 +1028,9 @@ export function renderWikiList(notes) {
     return "No Loop Wiki notes found.\n";
   }
   return `${[
-    "| ID | Status | Objective | Updated |",
-    "| --- | --- | --- | --- |",
-    ...notes.map((note) => `| ${escapeMarkdown(note.id)} | ${escapeMarkdown(note.status)} | ${escapeMarkdown(note.objective)} | ${escapeMarkdown(note.updatedAt)} |`)
+    "| ID | Type | Status | Title | Updated |",
+    "| --- | --- | --- | --- | --- |",
+    ...notes.map((note) => `| ${escapeMarkdown(note.id)} | ${escapeMarkdown(note.kind)} | ${escapeMarkdown(note.status)} | ${escapeMarkdown(note.title)} | ${escapeMarkdown(note.updatedAt)} |`)
   ].join("\n")}\n`;
 }
 
@@ -1027,9 +1288,13 @@ export function renderWikiDashboardHtml(notes) {
         const logLink = note.runId
           ? `<a class="button secondary" href="/runs/${encodeURIComponent(note.runId)}/log">View log</a>`
           : "";
+        const parentRow = note.parentTitle
+          ? `<dt>Parent</dt><dd>${escapeHtml(truncateText(note.parentTitle, 80))}</dd>`
+          : "";
         return `
       <article class="note-card">
         <div class="note-card-header">
+          <span class="kind">${escapeHtml(note.kind)}</span>
           <span class="status ${statusClass(note.status)}">${escapeHtml(note.status)}</span>
           <span>${escapeHtml(note.phase)}</span>
         </div>
@@ -1037,6 +1302,7 @@ export function renderWikiDashboardHtml(notes) {
         <p>${escapeHtml(note.summary)}</p>
         <dl class="meta-grid">
           <dt>Updated</dt><dd>${escapeHtml(note.updatedAt)}</dd>
+          ${parentRow}
           <dt>Tokens</dt><dd>${escapeHtml(tokenLabel(note.tokens))}</dd>
           <dt>Agent</dt><dd>${escapeHtml(sessionLabel(note.session))}</dd>
           <dt>Context</dt><dd>${note.links.length === 0 ? "No related notes yet" : `${note.links.length} related note${note.links.length === 1 ? "" : "s"}`}</dd>
@@ -1076,7 +1342,8 @@ export function renderWikiDashboardHtml(notes) {
     .panel { padding: 16px; }
     .note-card { padding: 14px; display: grid; gap: 8px; }
     .note-card-header, .summary-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--muted); font-size: 13px; }
-    .status { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); font-weight: 700; }
+    .status, .kind { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); font-weight: 700; }
+    .kind { color: #2f405c; background: #eef2f7; border-color: #cbd5e1; text-transform: capitalize; }
     .status-complete { color: var(--green); background: #eef8f1; border-color: #b7dfc2; }
     .status-risk { color: var(--red); background: #fff0ee; border-color: #f5c3bd; }
     .status-active { color: var(--amber); background: #fff7df; border-color: #ead189; }
@@ -1110,6 +1377,7 @@ export function renderWikiDashboardHtml(notes) {
         <h2>Current Reading Context</h2>
         ${recent ? `
           <div class="summary-row">
+            <span class="kind">${escapeHtml(recent.kind)}</span>
             <span class="status ${statusClass(recent.status)}">${escapeHtml(recent.status)}</span>
             <span>${escapeHtml(recent.phase)}</span>
             <span>${escapeHtml(sessionLabel(recent.session))}</span>
@@ -1141,7 +1409,7 @@ export function renderWikiGraphHtml(notes) {
     : `<ul>${edges.slice(0, 8).map((edge) => {
         const source = noteById.get(edge.source);
         const target = noteById.get(edge.target);
-        return `<li><strong>${escapeHtml(source ? truncateText(source.title, 42) : edge.source)}</strong> continues <strong>${escapeHtml(target ? truncateText(target.title, 42) : edge.target)}</strong></li>`;
+        return `<li><strong>${escapeHtml(source ? truncateText(source.title, 42) : edge.source)}</strong> ${escapeHtml(edge.relationship)} <strong>${escapeHtml(target ? truncateText(target.title, 42) : edge.target)}</strong></li>`;
       }).join("")}</ul>`;
   return `<!doctype html>
 <html lang="en">
@@ -1180,7 +1448,7 @@ export function renderWikiGraphHtml(notes) {
   <header>
     <div>
       <h1>Graph View</h1>
-      <p>Notes are dots. Lines show repeated or continued Loop context. Click a dot to open the note.</p>
+      <p>Notes are dots. Lines show continued runs and supporting artifacts. Click a dot to open the note.</p>
     </div>
     <a class="button" href="/">Back to notes</a>
   </header>

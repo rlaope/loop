@@ -21,7 +21,8 @@ import {
   renderWikiGraphHtml,
   serveWikiDashboard,
   waitForDashboardReady,
-  writeWikiForRunState
+  writeWikiForRunState,
+  writeWikiSupportingNote
 } from "../src/index.js";
 
 async function getFreePort() {
@@ -89,6 +90,58 @@ test("wiki note identity is stable for the same run state", () => {
     status: "failed",
     updatedAt: new Date("2026-06-13T09:20:00.000Z").toISOString()
   }));
+});
+
+test("writes multiple supporting wiki notes for one loop run", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-wiki-supporting-"));
+  const state = createRunState({
+    objective: "Build darkwear exhibit",
+    now: new Date("2026-06-13T08:00:01.000Z")
+  });
+  const runPaths = await writeWikiForRunState(state, {
+    stateDir,
+    now: new Date("2026-06-13T08:02:00.000Z")
+  });
+
+  const plan = await writeWikiSupportingNote({
+    stateDir,
+    runId: state.id,
+    kind: "plan",
+    title: "Gallery implementation plan",
+    body: "Use a restrained exhibit grid and keep product curation separate from buying links.",
+    now: new Date("2026-06-13T08:03:00.000Z")
+  });
+  const verification = await writeWikiSupportingNote({
+    stateDir,
+    runId: state.id,
+    kind: "verification",
+    title: "QA findings",
+    body: "Mobile cards need spacing verification before the site is treated as complete.",
+    now: new Date("2026-06-13T08:04:00.000Z")
+  });
+  const notes = await listWikiNotes({ stateDir });
+  const planMarkdown = await readWikiNote(plan.id, { stateDir });
+  const planMemory = JSON.parse(await readFile(plan.memoryPath, "utf8"));
+  const graph = /** @type {{ edges: Array<{ source: string, target: string, relationship: string }> }} */ (
+    JSON.parse(await readFile(plan.graphPath, "utf8"))
+  );
+
+  assert.equal(notes.length, 3);
+  assert.equal(notes.find((note) => note.id === runPaths.id)?.kind, "run");
+  assert.equal(notes.find((note) => note.id === plan.id)?.kind, "plan");
+  assert.equal(notes.find((note) => note.id === verification.id)?.kind, "verification");
+  assert.equal(notes.find((note) => note.id === plan.id)?.parentId, runPaths.id);
+  assert.equal(notes.find((note) => note.id === verification.id)?.parentId, runPaths.id);
+  assert.match(planMarkdown.markdown, /# Gallery implementation plan/);
+  assert.match(planMarkdown.markdown, /- Type: plan/);
+  assert.match(planMarkdown.markdown, /- Parent loop: Build darkwear exhibit/);
+  assert.match(planMarkdown.markdown, /Use a restrained exhibit grid/);
+  assert.doesNotMatch(planMarkdown.markdown, /\.\.\/user\//);
+  assert.equal(planMemory.kind, "plan");
+  assert.equal(planMemory.parentId, runPaths.id);
+  assert.deepEqual(planMemory.runIds, [state.id]);
+  assert.ok(graph.edges.some((edge) => edge.source === plan.id && edge.target === runPaths.id && edge.relationship === "supports"));
+  assert.ok(graph.edges.some((edge) => edge.source === verification.id && edge.target === runPaths.id && edge.relationship === "supports"));
 });
 
 test("wiki note identity does not collide for same-millisecond reruns", () => {

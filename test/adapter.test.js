@@ -66,6 +66,53 @@ test("CLI wiki list and read expose dry-run notes", async () => {
   assert.match(read, /## Token Usage/);
 });
 
+test("CLI wiki add attaches supporting notes to a loop run", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-cli-wiki-add-state-"));
+  const output = execFileSync(
+    process.execPath,
+    ["bin/loop.js", "--dry-run", "--objective", "Wiki add maintenance", "--state-dir", stateDir],
+    { encoding: "utf8" }
+  );
+  const parsed = JSON.parse(output);
+  const add = execFileSync(
+    process.execPath,
+    [
+      "bin/loop.js",
+      "wiki",
+      "add",
+      "--state-dir",
+      stateDir,
+      "--run",
+      parsed.stateId,
+      "--kind",
+      "idea",
+      "--title",
+      "Alternate exhibit path",
+      "--body",
+      "Try a founder-curated rail beside the product grid."
+    ],
+    { encoding: "utf8" }
+  );
+  const addedId = /Added wiki idea note ([^\n]+)/.exec(add)?.[1];
+  const list = execFileSync(
+    process.execPath,
+    ["bin/loop.js", "wiki", "list", "--state-dir", stateDir],
+    { encoding: "utf8" }
+  );
+  const read = execFileSync(
+    process.execPath,
+    ["bin/loop.js", "wiki", "read", String(addedId), "--state-dir", stateDir],
+    { encoding: "utf8" }
+  );
+
+  assert.ok(addedId);
+  assert.match(list, /Alternate exhibit path/);
+  assert.match(list, /\| idea \|/);
+  assert.match(read, /# Alternate exhibit path/);
+  assert.match(read, /- Type: idea/);
+  assert.match(read, /- Parent loop: Wiki add maintenance/);
+});
+
 test("CLI dry-run reports wiki failure after durable state write", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "loop-cli-wiki-fail-"));
   await writeFile(join(stateDir, "wiki"), "occupied");

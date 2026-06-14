@@ -30,6 +30,7 @@ import {
   waitForDashboardReady,
   wikiNotePath,
   writeWikiForRunState,
+  writeWikiSupportingNote,
   writeRunState
 } from "../src/index.js";
 
@@ -44,9 +45,14 @@ const flagsWithValues = new Set([
   "--expected-root",
   "--host",
   "--isolation",
+  "--body",
+  "--kind",
   "--objective",
+  "--parent",
   "--port",
-  "--state-dir"
+  "--run",
+  "--state-dir",
+  "--title"
 ]);
 const booleanFlags = new Set([
   "--acknowledge-local",
@@ -56,6 +62,7 @@ const booleanFlags = new Set([
   "--follow",
   "--no-interview",
   "--read-only",
+  "--stdin",
   "--version",
   "--wiki-dashboard",
   "-h",
@@ -564,6 +571,43 @@ async function handleWikiCommand() {
   const positionals = positionalArgs();
   const subcommand = positionals[0] ?? "serve";
   const id = positionals[1];
+
+  if (subcommand === "add") {
+    const afterAdd = positionals.slice(1);
+    const explicitKind = valueFor("--kind");
+    const explicitTitle = valueFor("--title");
+    const explicitBody = valueFor("--body");
+    const positionalLooksTyped = !explicitKind && afterAdd.length >= 3;
+    const kind = explicitKind ?? (positionalLooksTyped ? afterAdd[0] : "note");
+    const title = explicitTitle ?? (positionalLooksTyped ? afterAdd[1] : afterAdd[0]);
+    const body = has("--stdin")
+      ? readFileSync(0, "utf8")
+      : (explicitBody ?? (positionalLooksTyped ? afterAdd.slice(2).join(" ") : afterAdd.slice(1).join(" ")));
+    if (!title) {
+      process.stderr.write("loop wiki add requires --title or a title argument\n");
+      process.exit(1);
+    }
+    if (!body.trim()) {
+      process.stderr.write("loop wiki add requires --body, --stdin, or a body argument\n");
+      process.exit(1);
+    }
+    try {
+      const result = await writeWikiSupportingNote({
+        stateDir,
+        runId: valueFor("--run"),
+        parentId: valueFor("--parent"),
+        kind,
+        title,
+        body
+      });
+      process.stdout.write(`Added wiki ${result.kind} note ${result.id}\n`);
+      process.stdout.write(`${result.notePath}\n`);
+      process.exit(0);
+    } catch (error) {
+      process.stderr.write(`Wiki note add failed: ${errorMessage(error)}\n`);
+      process.exit(1);
+    }
+  }
 
   if (subcommand === "list") {
     try {
