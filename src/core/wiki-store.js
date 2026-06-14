@@ -322,34 +322,344 @@ function sessionFromRunState(state) {
 }
 
 /** @param {WikiSession | null | undefined} session */
-function sessionLabel(session) {
-  if (!session) {
-    return "not recorded";
-  }
-  const agent = session.agent ?? "agent";
-  if (session.status === "running") {
-    return `${agent} running${session.pid ? ` · pid ${session.pid}` : ""}`;
-  }
-  if (session.status === "exited") {
-    return `${agent} exited`;
-  }
-  if (session.status === "failed_to_start") {
-    return `${agent} failed to start`;
-  }
-  return `${agent} ${session.status ?? "session recorded"}`;
+/** @typedef {"en" | "ko"} WikiLocale */
+
+/** @param {string | null | undefined} value */
+function hasHangul(value) {
+  return /[가-힣]/.test(value ?? "");
 }
 
 /**
  * @param {import("./run-state.js").LoopRunState} state
+ * @returns {WikiLocale}
  */
-function statusSummary(state) {
+function localeForState(state) {
+  return hasHangul(state.objective) ? "ko" : "en";
+}
+
+/**
+ * @param {WikiIndexEntry} note
+ * @returns {WikiLocale}
+ */
+function localeForNote(note) {
+  return hasHangul(note.title) || hasHangul(note.objective) || hasHangul(note.summary) ? "ko" : "en";
+}
+
+/**
+ * @param {WikiIndexEntry[]} notes
+ * @returns {WikiLocale}
+ */
+function localeForNotes(notes) {
+  return notes.some((note) => localeForNote(note) === "ko") ? "ko" : "en";
+}
+
+/** @param {WikiLocale} locale */
+function wikiText(locale) {
+  return locale === "ko"
+    ? {
+        lang: "ko",
+        missingSession: "기록 없음",
+        agent: "agent",
+        running: "실행 중",
+        exited: "종료됨",
+        failedToStart: "시작 실패",
+        sessionRecorded: "세션 기록됨",
+        noEvidence: "- pending: 아직 기록된 검증 증거가 없습니다.",
+        noFlags: "기록된 플래그가 없습니다.",
+        noteQuote: "Loop Wiki 노트",
+        narrative: "요약",
+        purpose: "목적",
+        decisionLog: "결정 기록",
+        rationale: "근거",
+        changeSummary: "작업 / 변경 요약",
+        technicalSpec: "기술 명세",
+        verification: "검증 증거",
+        flags: "플래그 / 리스크 / 후속 작업",
+        graphLinks: "그래프 링크",
+        machineContext: "머신 컨텍스트",
+        field: "항목",
+        value: "값",
+        runId: "Run ID",
+        objectiveSlug: "목적 slug",
+        phase: "단계",
+        status: "상태",
+        agentSession: "에이전트 세션",
+        agentLog: "에이전트 로그",
+        stateJson: "상태 JSON",
+        runSummary: "실행 요약",
+        notProvided: "제공되지 않음",
+        notRecorded: "기록되지 않음",
+        secondBrain: "세컨드 브레인",
+        graphView: "그래프 보기",
+        recentStatus: "최근 상태",
+        runs: "실행",
+        attached: "첨부",
+        total: "전체",
+        loopStack: "루프 스택",
+        notes: "노트",
+        read: "읽기",
+        readNote: "노트 읽기",
+        viewLog: "로그 보기",
+        delete: "삭제",
+        attachedNotes: "첨부 노트",
+        noAttachedNotes: "첨부 노트가 없습니다.",
+        unattachedNotes: "분리된 노트",
+        preserved: "보존됨",
+        visibleNotes: "표시된 노트",
+        noNotesYet: "아직 노트가 없습니다.",
+        readableConnections: "읽기 쉬운 연결",
+        backToNotes: "노트로 돌아가기",
+        liveRunLog: "실시간 실행 로그",
+        liveTail: "라이브 테일",
+        commandToWatch: "터미널에서 보기",
+        commandToResume: "Codex 이어보기",
+        commandUnavailable: "이 실행에서 이어보기 명령을 만들 수 없습니다.",
+        outputEmpty: "아직 기록된 로그가 없습니다.",
+        pollingHint: "로그 파일을 1초마다 다시 읽고 있습니다.",
+        copied: "복사됨",
+        copy: "복사"
+      }
+    : {
+        lang: "en",
+        missingSession: "not recorded",
+        agent: "agent",
+        running: "running",
+        exited: "exited",
+        failedToStart: "failed to start",
+        sessionRecorded: "session recorded",
+        noEvidence: "- pending: No verification evidence has been recorded yet.",
+        noFlags: "No flags recorded.",
+        noteQuote: "Loop Wiki note",
+        narrative: "Narrative Summary",
+        purpose: "Purpose",
+        decisionLog: "Decision Log",
+        rationale: "Rationale",
+        changeSummary: "Work / Change Summary",
+        technicalSpec: "Technical Spec",
+        verification: "Verification Evidence",
+        flags: "Flags / Risks / Follow-ups",
+        graphLinks: "Graph Links",
+        machineContext: "Machine Context",
+        field: "Field",
+        value: "Value",
+        runId: "Run ID",
+        objectiveSlug: "Objective slug",
+        phase: "Phase",
+        status: "Status",
+        agentSession: "Agent session",
+        agentLog: "Agent log",
+        stateJson: "State JSON",
+        runSummary: "Run summary",
+        notProvided: "Not provided.",
+        notRecorded: "Not recorded.",
+        secondBrain: "Second Brain",
+        graphView: "Graph View",
+        recentStatus: "Recent Status",
+        runs: "Runs",
+        attached: "Attached",
+        total: "Total",
+        loopStack: "Loop Stack",
+        notes: "notes",
+        read: "Read",
+        readNote: "Read Note",
+        viewLog: "View Log",
+        delete: "Delete",
+        attachedNotes: "Attached Notes",
+        noAttachedNotes: "No attached notes.",
+        unattachedNotes: "Unattached Notes",
+        preserved: "preserved",
+        visibleNotes: "Visible Notes",
+        noNotesYet: "No notes yet.",
+        readableConnections: "Readable Connections",
+        backToNotes: "Back to notes",
+        liveRunLog: "Live Run Log",
+        liveTail: "Live tail",
+        commandToWatch: "Watch in terminal",
+        commandToResume: "Resume Codex",
+        commandUnavailable: "No resume command can be built for this run.",
+        outputEmpty: "No log output recorded yet.",
+        pollingHint: "Reading the log file every second.",
+        copied: "Copied",
+        copy: "Copy"
+      };
+}
+
+const KO_STATUS_LABELS = new Map([
+  ["active", "진행 중"],
+  ["complete", "완료"],
+  ["paused", "일시정지"],
+  ["budget_exhausted", "예산 소진"],
+  ["unsafe", "안전 차단"],
+  ["failed", "실패"],
+  ["blocked", "차단됨"]
+]);
+
+const KO_PHASE_LABELS = new Map([
+  ["intake", "접수"],
+  ["plan", "계획"],
+  ["discover", "탐색"],
+  ["isolate", "격리"],
+  ["act", "실행"],
+  ["verify", "검증"],
+  ["persist", "기록"],
+  ["stop", "종료"]
+]);
+
+const KO_KIND_LABELS = new Map([
+  ["run", "실행"],
+  ["plan", "계획"],
+  ["verification", "검증"],
+  ["idea", "아이디어"],
+  ["decision", "결정"],
+  ["reference", "참고"],
+  ["note", "노트"]
+]);
+
+const KO_EVIDENCE_STATUS_LABELS = new Map([
+  ["passed", "통과"],
+  ["failed", "실패"],
+  ["pending", "대기"],
+  ["unknown", "알 수 없음"]
+]);
+
+const KO_FLAG_KIND_LABELS = new Map([
+  ["follow_up", "후속 작업"],
+  ["risk", "리스크"],
+  ["assumption", "가정"]
+]);
+
+const KO_SEVERITY_LABELS = new Map([
+  ["low", "낮음"],
+  ["medium", "중간"],
+  ["high", "높음"]
+]);
+
+const KO_RUN_TEXT = new Map([
+  ["review agent changes and run project verification", "에이전트 변경사항을 검토하고 프로젝트 검증을 실행합니다."],
+  ["Stop when verification evidence proves the objective is complete.", "검증 증거가 목적 완료를 입증하면 멈춥니다."],
+  ["plan", "계획을 수립합니다."]
+]);
+
+/**
+ * @param {string} value
+ * @param {WikiLocale} locale
+ */
+function localizeRunText(value, locale) {
+  return locale === "ko" ? KO_RUN_TEXT.get(value) ?? value : value;
+}
+
+/**
+ * @param {string} value
+ * @param {WikiLocale} locale
+ */
+function displayStatus(value, locale) {
+  return locale === "ko" ? KO_STATUS_LABELS.get(value) ?? value : value;
+}
+
+/**
+ * @param {string} value
+ * @param {WikiLocale} locale
+ */
+function displayPhase(value, locale) {
+  return locale === "ko" ? KO_PHASE_LABELS.get(value) ?? value : value;
+}
+
+/**
+ * @param {string} value
+ * @param {WikiLocale} locale
+ */
+function displayKind(value, locale) {
+  return locale === "ko" ? KO_KIND_LABELS.get(value) ?? value : value;
+}
+
+/**
+ * @param {string} value
+ * @param {WikiLocale} locale
+ */
+function displayEvidenceStatus(value, locale) {
+  return locale === "ko" ? KO_EVIDENCE_STATUS_LABELS.get(value) ?? value : value;
+}
+
+/**
+ * @param {string} value
+ * @param {WikiLocale} locale
+ */
+function displayFlagKind(value, locale) {
+  return locale === "ko" ? KO_FLAG_KIND_LABELS.get(value) ?? value : value;
+}
+
+/**
+ * @param {string} value
+ * @param {WikiLocale} locale
+ */
+function displaySeverity(value, locale) {
+  return locale === "ko" ? KO_SEVERITY_LABELS.get(value) ?? value : value;
+}
+
+/**
+ * @param {string} value
+ * @param {WikiLocale} locale
+ */
+function localizeEvidenceSummary(value, locale) {
+  if (locale !== "ko") {
+    return value;
+  }
+  const codexExit = value.match(/^codex agent exited with status (\d+)\.$/);
+  if (codexExit) {
+    return `codex 에이전트가 상태 코드 ${codexExit[1]}으로 종료되었습니다.`;
+  }
+  const claudeExit = value.match(/^claudecode agent exited with status (\d+)\.$/);
+  if (claudeExit) {
+    return `Claude Code 에이전트가 상태 코드 ${claudeExit[1]}으로 종료되었습니다.`;
+  }
+  return value;
+}
+
+/**
+ * @param {WikiSession | null | undefined} session
+ * @param {WikiLocale} [locale]
+ */
+function sessionLabel(session, locale = "en") {
+  const text = wikiText(locale);
+  if (!session) {
+    return text.missingSession;
+  }
+  const agent = session.agent ?? text.agent;
+  if (session.status === "running") {
+    return `${agent} ${text.running}${session.pid ? ` · pid ${session.pid}` : ""}`;
+  }
+  if (session.status === "exited") {
+    return `${agent} ${text.exited}`;
+  }
+  if (session.status === "failed_to_start") {
+    return `${agent} ${text.failedToStart}`;
+  }
+  return `${agent} ${session.status ?? text.sessionRecorded}`;
+}
+
+/**
+ * @param {import("./run-state.js").LoopRunState} state
+ * @param {WikiLocale} [locale]
+ */
+function statusSummary(state, locale = "en") {
+  if (locale === "ko") {
+    return `${displayPhase(state.phase, locale)} 단계의 ${displayStatus(state.status, locale)} 실행입니다. 다음 작업: ${localizeRunText(state.nextAction, locale)}`;
+  }
   return `${state.status} run in ${state.phase} phase. Next action: ${state.nextAction}`;
 }
 
 /**
  * @param {import("./run-state.js").LoopRunState} state
+ * @param {WikiLocale} [locale]
  */
-function narrativeSummary(state) {
+function narrativeSummary(state, locale = "en") {
+  if (locale === "ko") {
+    return [
+      `이 노트는 "${state.objective}" Loop 실행을 기록합니다.`,
+      `현재 실행은 ${displayPhase(state.phase, locale)} 단계의 ${displayStatus(state.status, locale)} 상태이며, 가장 중요한 후속 작업은 "${localizeRunText(state.nextAction, locale)}"입니다.`,
+      "이 페이지는 에이전트에게 맡긴 목적, 현재 증거, 완료 판단 전에 사람이 확인해야 할 내용을 복구하기 위한 사람이 읽는 기록입니다."
+    ].join(" ");
+  }
   return [
     `This note captures the Loop run for "${state.objective}".`,
     `The run is currently ${state.status} in the ${state.phase} phase, so the most important follow-up is: ${state.nextAction}.`,
@@ -359,10 +669,34 @@ function narrativeSummary(state) {
 
 /**
  * @param {import("./run-state.js").LoopRunState} state
+ * @param {WikiLocale} [locale]
  */
-function decisionEntries(state) {
+function decisionEntries(state, locale = "en") {
+  const approvalScope = state.approvals.approvalScope.join(", ") || "write";
+  const localizedApprovalScope = locale === "ko"
+    ? approvalScope.replace(/\bwrite\b/g, "쓰기").replace(/\bread\b/g, "읽기")
+    : approvalScope;
+  if (locale === "ko") {
+    const approvalText = state.approvals.humanApproval
+      ? `쓰기 가능한 작업이 다음 범위로 승인되었습니다: ${localizedApprovalScope}.`
+      : "쓰기 승인이 기록되지 않았으므로, 이후 증거가 생기기 전까지 이 실행은 읽기 전용 또는 실행 전 맥락으로 보아야 합니다.";
+    return [
+      {
+        decision: "목적을 작업 계약으로 사용합니다.",
+        rationale: `Loop는 다음 목적으로 시작되었습니다: ${state.objective}`
+      },
+      {
+        decision: "기록된 멈춤 조건에 따라 중단합니다.",
+        rationale: localizeRunText(state.stopCondition.description, locale)
+      },
+      {
+        decision: "승인과 안전 상태를 계속 보이게 둡니다.",
+        rationale: approvalText
+      }
+    ];
+  }
   const approvalText = state.approvals.humanApproval
-    ? `Write-capable work was approved for scope: ${state.approvals.approvalScope.join(", ") || "write"}.`
+    ? `Write-capable work was approved for scope: ${approvalScope}.`
     : "No write approval was recorded, so the run should be treated as read-only or pre-action context until later evidence says otherwise.";
   return [
     {
@@ -382,21 +716,24 @@ function decisionEntries(state) {
 
 /**
  * @param {import("./run-state.js").LoopRunState} state
+ * @param {WikiLocale} [locale]
  */
-function flagEntries(state) {
+function flagEntries(state, locale = "en") {
   /** @type {{ kind: string, text: string, severity: "low" | "medium" | "high" }[]} */
   const flags = [];
   if (state.status !== "complete") {
     flags.push({
       kind: state.status === "failed" || state.status === "unsafe" ? "risk" : "follow_up",
-      text: `Run status is ${state.status}; next action is: ${state.nextAction}`,
+      text: locale === "ko"
+        ? `실행 상태는 ${displayStatus(state.status, locale)}입니다. 다음 작업: ${localizeRunText(state.nextAction, locale)}`
+        : `Run status is ${state.status}; next action is: ${state.nextAction}`,
       severity: state.status === "failed" || state.status === "unsafe" ? "high" : "medium"
     });
   }
   if (state.verificationEvidence.length === 0) {
     flags.push({
       kind: "assumption",
-      text: "No verification evidence has been recorded yet.",
+      text: locale === "ko" ? "아직 기록된 검증 증거가 없습니다." : "No verification evidence has been recorded yet.",
       severity: "medium"
     });
   }
@@ -423,13 +760,14 @@ function relatedNoteTitle(link) {
  * @returns {WikiLink[]}
  */
 function relatedLinks(index, state, id) {
+  const locale = localeForState(state);
   return index.notes
     .filter((note) => note.id !== id && note.objectiveSlug === state.objectiveSlug && note.kind === "run")
     .slice(0, 5)
     .map((note) => ({
       target: `../user/${note.id}.md`,
       relationship: "continues",
-      reason: "Earlier Loop Wiki note for the same objective.",
+      reason: locale === "ko" ? "같은 목적에 대한 이전 Loop Wiki 노트입니다." : "Earlier Loop Wiki note for the same objective.",
       title: note.title,
       summary: note.summary,
       updatedAt: note.updatedAt,
@@ -473,88 +811,100 @@ function resolveSupportingParent(index, { runId, parentId }) {
  * @param {{ id: string, links: WikiLink[], paths?: WikiRunPaths }} options
  */
 export function renderWikiNote(state, { id, links, paths = {} }) {
+  const locale = localeForState(state);
+  const text = wikiText(locale);
   const session = sessionFromRunState(state);
   const evidence = state.verificationEvidence.length === 0
-    ? "- pending: No verification evidence has been recorded yet."
-    : state.verificationEvidence.map((entry) => `- ${entry.status}: ${entry.summary}`).join("\n");
-  const flags = flagEntries(state);
+    ? text.noEvidence
+    : state.verificationEvidence.map((entry) => `- ${displayEvidenceStatus(entry.status, locale)}: ${localizeEvidenceSummary(entry.summary, locale)}`).join("\n");
+  const flags = flagEntries(state, locale);
   const flagText = flags.length === 0
-    ? "No flags recorded."
-    : flags.map((flag) => `- ${flag.severity}: ${flag.kind} - ${flag.text}`).join("\n");
-  const decisions = decisionEntries(state);
+    ? text.noFlags
+    : flags.map((flag) => `- ${displaySeverity(flag.severity, locale)}: ${displayFlagKind(flag.kind, locale)} - ${flag.text}`).join("\n");
+  const decisions = decisionEntries(state, locale);
   const decisionText = decisions
     .map((entry) => `- ${entry.decision} ${entry.rationale}`)
     .join("\n");
   const technicalRows = [
-    ["Run ID", state.id],
-    ["Objective slug", state.objectiveSlug],
-    ["Phase", state.phase],
-    ["Status", state.status],
-    ["Agent session", sessionLabel(session)],
-    ["Agent log", session?.logPath ?? "Not recorded."],
-    ["State JSON", paths.jsonPath ?? "Not provided."],
-    ["Run summary", paths.summaryPath ?? "Not provided."]
+    [text.runId, state.id],
+    [text.objectiveSlug, state.objectiveSlug],
+    [text.phase, locale === "ko" ? `${displayPhase(state.phase, locale)} (${state.phase})` : state.phase],
+    [text.status, locale === "ko" ? `${displayStatus(state.status, locale)} (${state.status})` : state.status],
+    [text.agentSession, sessionLabel(session, locale)],
+    [text.agentLog, session?.logPath ?? text.notRecorded],
+    [text.stateJson, paths.jsonPath ?? text.notProvided],
+    [text.runSummary, paths.summaryPath ?? text.notProvided]
   ];
 
   return [
     `# ${state.objective}`,
     "",
-    `> Loop Wiki note: ${id}`,
+    `> ${text.noteQuote}: ${id}`,
     "",
-    "## Narrative Summary",
+    `## ${text.narrative}`,
     "",
-    narrativeSummary(state),
+    narrativeSummary(state, locale),
     "",
-    "## Purpose",
+    `## ${text.purpose}`,
     "",
-    `The purpose of this run is to move the project toward: ${state.objective}`,
+    locale === "ko"
+      ? `이 실행의 목적은 프로젝트를 다음 방향으로 진행하는 것입니다: ${state.objective}`
+      : `The purpose of this run is to move the project toward: ${state.objective}`,
     "",
-    `The current stop rule is: ${state.stopCondition.description}`,
+    locale === "ko"
+      ? `현재 멈춤 규칙: ${localizeRunText(state.stopCondition.description, locale)}`
+      : `The current stop rule is: ${state.stopCondition.description}`,
     "",
-    "## Decision Log",
+    `## ${text.decisionLog}`,
     "",
     decisionText,
     "",
-    "## Rationale",
+    `## ${text.rationale}`,
     "",
-    `The loop records the objective, safety state, run phase, verification evidence, and graph links so a human can recover context without replaying the whole agent conversation. The latest recorded next action is: ${state.nextAction}`,
+    locale === "ko"
+      ? `Loop는 목적, 안전 상태, 실행 단계, 검증 증거, 그래프 링크를 기록해서 사람이 전체 에이전트 대화를 다시 재생하지 않아도 맥락을 복구할 수 있게 합니다. 마지막으로 기록된 다음 작업: ${localizeRunText(state.nextAction, locale)}`
+      : `The loop records the objective, safety state, run phase, verification evidence, and graph links so a human can recover context without replaying the whole agent conversation. The latest recorded next action is: ${state.nextAction}`,
     "",
-    "## Work / Change Summary",
+    `## ${text.changeSummary}`,
     "",
-    statusSummary(state),
+    statusSummary(state, locale),
     "",
-    `Agent session: ${sessionLabel(session)}.`,
+    locale === "ko" ? `에이전트 세션: ${sessionLabel(session, locale)}.` : `Agent session: ${sessionLabel(session, locale)}.`,
     "",
-    "## Technical Spec",
+    `## ${text.technicalSpec}`,
     "",
-    "| Field | Value |",
+    `| ${text.field} | ${text.value} |`,
     "| --- | --- |",
     ...technicalRows.map(([field, value]) => `| ${escapeMarkdown(field)} | ${escapeMarkdown(value)} |`),
     "",
-    "## Verification Evidence",
+    `## ${text.verification}`,
     "",
     evidence,
     "",
-    "## Flags / Risks / Follow-ups",
+    `## ${text.flags}`,
     "",
     flagText,
     "",
-    "## Graph Links",
+    `## ${text.graphLinks}`,
     "",
     links.length === 0
-      ? "This note has no graph edges yet. Future runs with the same objective slug will appear here."
+      ? (locale === "ko"
+          ? "아직 그래프 연결이 없습니다. 같은 목적 slug의 이후 실행은 여기에 표시됩니다."
+          : "This note has no graph edges yet. Future runs with the same objective slug will appear here.")
       : [
-          `This note continues ${links.length} earlier note${links.length === 1 ? "" : "s"} for the same objective. Open Graph View for the full map.`,
+          locale === "ko"
+            ? `이 노트는 같은 목적의 이전 노트 ${links.length}개를 이어갑니다. 전체 지도는 그래프 보기에서 확인하세요.`
+            : `This note continues ${links.length} earlier note${links.length === 1 ? "" : "s"} for the same objective. Open Graph View for the full map.`,
           "",
           ...links.map((link) => `- ${link.relationship}: ${relatedNoteTitle(link)}`)
         ].join("\n"),
     "",
-    "## Machine Context",
+    `## ${text.machineContext}`,
     "",
-    `- Run state: ${state.id}`,
-    `- Objective slug: ${state.objectiveSlug}`,
-    `- Created: ${state.createdAt}`,
-    `- Updated: ${state.updatedAt}`,
+    locale === "ko" ? `- 실행 상태: ${state.id}` : `- Run state: ${state.id}`,
+    locale === "ko" ? `- 목적 slug: ${state.objectiveSlug}` : `- Objective slug: ${state.objectiveSlug}`,
+    locale === "ko" ? `- 생성: ${state.createdAt}` : `- Created: ${state.createdAt}`,
+    locale === "ko" ? `- 갱신: ${state.updatedAt}` : `- Updated: ${state.updatedAt}`,
     ""
   ].join("\n");
 }
@@ -575,8 +925,9 @@ function shortSummaryFromMarkdown(markdown) {
  * @param {{ id: string, noteRelativePath: string, markdown: string, markdownHash: string, generatedMarkdownHash: string, links: WikiLink[], paths?: WikiRunPaths }} options
  */
 function buildAiMemory(state, { id, noteRelativePath, markdown, markdownHash, generatedMarkdownHash, links, paths = {} }) {
-  const flags = flagEntries(state);
-  const decisions = decisionEntries(state);
+  const locale = localeForState(state);
+  const flags = flagEntries(state, locale);
+  const decisions = decisionEntries(state, locale);
   const session = sessionFromRunState(state);
   return {
     version: 1,
@@ -611,7 +962,9 @@ function buildAiMemory(state, { id, noteRelativePath, markdown, markdownHash, ge
         summary: entry.summary,
         recordedAt: entry.recordedAt
       })),
-      gaps: state.verificationEvidence.length === 0 ? ["No verification evidence recorded yet."] : []
+      gaps: state.verificationEvidence.length === 0
+        ? [locale === "ko" ? "아직 기록된 검증 증거가 없습니다." : "No verification evidence recorded yet."]
+        : []
     },
     flags,
     graph: {
@@ -633,24 +986,28 @@ function buildAiMemory(state, { id, noteRelativePath, markdown, markdownHash, ge
  * @param {{ kind: string, title: string, body: string, parent: WikiIndexEntry, links: WikiLink[] }} input
  */
 function renderSupportingWikiNote({ kind, title, body, parent, links }) {
+  const locale = localeForNote(parent);
+  const kindLabel = displayKind(kind, locale);
   return [
     `# ${title}`,
     "",
-    `> Loop Wiki ${kind} note`,
+    locale === "ko" ? `> Loop Wiki ${kindLabel} 노트` : `> Loop Wiki ${kind} note`,
     "",
-    "## Context",
+    locale === "ko" ? "## 맥락" : "## Context",
     "",
-    `- Type: ${kind}`,
-    `- Parent loop: ${parent.title}`,
-    `- Objective: ${parent.objective}`,
+    locale === "ko" ? `- 유형: ${kindLabel}` : `- Type: ${kind}`,
+    locale === "ko" ? `- 상위 루프: ${parent.title}` : `- Parent loop: ${parent.title}`,
+    locale === "ko" ? `- 목적: ${parent.objective}` : `- Objective: ${parent.objective}`,
     "",
-    "## Note",
+    locale === "ko" ? "## 노트" : "## Note",
     "",
     body.trim(),
     "",
-    "## How It Connects",
+    locale === "ko" ? "## 연결 방식" : "## How It Connects",
     "",
-    `This note supports the parent loop by preserving a separate ${kind} artifact instead of folding it into the main run note.`,
+    locale === "ko"
+      ? `이 노트는 ${kindLabel} 자료를 메인 실행 노트에 섞지 않고 별도 아티팩트로 보존해서 상위 루프를 보조합니다.`
+      : `This note supports the parent loop by preserving a separate ${kind} artifact instead of folding it into the main run note.`,
     ""
   ].join("\n");
 }
@@ -892,7 +1249,9 @@ export async function writeWikiSupportingNote({
   const links = [{
     target: `../user/${parent.id}.md`,
     relationship: "supports",
-    reason: `Supporting ${normalizedKind} note for this Loop run.`,
+    reason: localeForNote(parent) === "ko"
+      ? `이 Loop 실행을 보조하는 ${normalizedKind} 노트입니다.`
+      : `Supporting ${normalizedKind} note for this Loop run.`,
     title: parent.title,
     summary: parent.summary,
     updatedAt: parent.updatedAt,
@@ -1288,6 +1647,8 @@ function renderGraphSvg(notes) {
  * @param {WikiIndexEntry[]} notes
  */
 export function renderWikiDashboardHtml(notes) {
+  const locale = localeForNotes(notes);
+  const text = wikiText(locale);
   const recent = notes[0];
   const runNotes = notes.filter(isRunNote);
   const attachedNotes = notes.filter((note) => note.parentId);
@@ -1304,7 +1665,7 @@ export function renderWikiDashboardHtml(notes) {
    */
   const renderAttachedRows = (children) => {
     if (children.length === 0) {
-      return "<p class=\"muted small\">No attached notes.</p>";
+      return `<p class="muted small">${escapeHtml(text.noAttachedNotes)}</p>`;
     }
     for (const child of children) {
       renderedAttachedIds.add(child.id);
@@ -1313,16 +1674,16 @@ export function renderWikiDashboardHtml(notes) {
           <article class="attached-note">
             <div>
               <div class="note-row-meta">
-                <span class="kind">${escapeHtml(child.kind)}</span>
+                <span class="kind">${escapeHtml(displayKind(child.kind, locale))}</span>
                 <span>${escapeHtml(child.updatedAt)}</span>
               </div>
               <h4>${escapeHtml(child.title)}</h4>
               <p>${escapeHtml(child.summary)}</p>
             </div>
             <div class="inline-actions">
-              <a class="text-link" href="/notes/${encodeURIComponent(child.id)}">Read</a>
+              <a class="text-link" href="/notes/${encodeURIComponent(child.id)}">${escapeHtml(text.read)}</a>
               <form method="post" action="/notes/${encodeURIComponent(child.id)}/delete">
-                <button class="text-danger" type="submit">Delete</button>
+                <button class="text-danger" type="submit">${escapeHtml(text.delete)}</button>
               </form>
             </div>
           </article>`).join("");
@@ -1334,29 +1695,29 @@ export function renderWikiDashboardHtml(notes) {
     const children = childrenByParent.get(runNote.id) ?? [];
     const childRows = renderAttachedRows(children);
     const logLink = runNote.runId
-      ? `<a class="button ghost" href="/runs/${encodeURIComponent(runNote.runId)}/log">View Log</a>`
+      ? `<a class="button ghost" href="/runs/${encodeURIComponent(runNote.runId)}/log">${escapeHtml(text.viewLog)}</a>`
       : "";
     return `
       <article class="run-stack">
         <div class="run-main">
           <div class="note-card-header">
-            <span class="kind">${escapeHtml(runNote.kind)}</span>
-            <span class="status ${statusClass(runNote.status)}">${escapeHtml(runNote.status)}</span>
-            <span>${escapeHtml(sessionLabel(runNote.session))}</span>
+            <span class="kind">${escapeHtml(displayKind(runNote.kind, locale))}</span>
+            <span class="status ${statusClass(runNote.status)}">${escapeHtml(displayStatus(runNote.status, locale))}</span>
+            <span>${escapeHtml(sessionLabel(runNote.session, locale))}</span>
           </div>
           <h3>${escapeHtml(runNote.title)}</h3>
           <p>${escapeHtml(runNote.summary)}</p>
           <div class="card-actions">
-            <a class="button secondary" href="/notes/${encodeURIComponent(runNote.id)}">Read Note</a>
+            <a class="button secondary" href="/notes/${encodeURIComponent(runNote.id)}">${escapeHtml(text.readNote)}</a>
             ${logLink}
             <form method="post" action="/notes/${encodeURIComponent(runNote.id)}/delete">
-              <button class="button danger" type="submit">Delete</button>
+              <button class="button danger" type="submit">${escapeHtml(text.delete)}</button>
             </form>
           </div>
         </div>
         <div class="attached-list">
           <div class="section-title-row">
-            <h4>Attached Notes</h4>
+            <h4>${escapeHtml(text.attachedNotes)}</h4>
             <span>${children.length}</span>
           </div>
           ${childRows}
@@ -1370,37 +1731,33 @@ export function renderWikiDashboardHtml(notes) {
       <article class="run-stack unstacked-stack">
         <div class="run-main">
           <div class="note-card-header">
-            <span class="kind">notes</span>
-            <span class="status status-active">preserved</span>
+            <span class="kind">${escapeHtml(text.notes)}</span>
+            <span class="status status-active">${escapeHtml(text.preserved)}</span>
           </div>
-          <h3>Unattached Notes</h3>
-          <p>Notes whose parent run or parent note is no longer visible in this stack.</p>
+          <h3>${escapeHtml(text.unattachedNotes)}</h3>
+          <p>${escapeHtml(locale === "ko" ? "상위 실행 또는 상위 노트가 더 이상 이 스택에 보이지 않는 노트입니다." : "Notes whose parent run or parent note is no longer visible in this stack.")}</p>
         </div>
         <div class="attached-list">
           <div class="section-title-row">
-            <h4>Visible Notes</h4>
+            <h4>${escapeHtml(text.visibleNotes)}</h4>
             <span>${unstackedNotes.length}</span>
           </div>
           ${renderAttachedRows(unstackedNotes)}
         </div>
       </article>`;
-  const latest = recent ? `
-      <article class="latest-card">
-        <div class="note-card-header">
-          <span class="kind">${escapeHtml(recent.kind)}</span>
-          <span class="status ${statusClass(recent.status)}">${escapeHtml(recent.status)}</span>
-          <span>${escapeHtml(recent.updatedAt)}</span>
-        </div>
-        <h2>${escapeHtml(recent.title)}</h2>
-        <p>${escapeHtml(recent.summary)}</p>
-        <div class="card-actions">
-          <a class="button secondary" href="/notes/${encodeURIComponent(recent.id)}">Read Latest</a>
-        </div>
-      </article>`
-    : "<article class=\"latest-card empty\"><h2>No notes yet.</h2></article>";
-  const stackHtml = `${rootStacks}${unstackedStack}` || "<p class=\"muted\">No Loop Wiki notes found.</p>";
+  const recentStatus = recent ? `
+        <div class="status-card">
+          <span>${escapeHtml(text.recentStatus)}</span>
+          <strong>${escapeHtml(displayStatus(recent.status, locale))}</strong>
+          <small>${escapeHtml(`${displayPhase(recent.phase, locale)} · ${sessionLabel(recent.session, locale)}`)}</small>
+        </div>` : `
+        <div class="status-card">
+          <span>${escapeHtml(text.recentStatus)}</span>
+          <strong>${escapeHtml(text.noNotesYet)}</strong>
+        </div>`;
+  const stackHtml = `${rootStacks}${unstackedStack}` || `<p class="muted">${escapeHtml(text.noNotesYet)}</p>`;
   return `<!doctype html>
-<html lang="en">
+<html lang="${text.lang}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1422,13 +1779,15 @@ export function renderWikiDashboardHtml(notes) {
     .actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
     .eyebrow { color: var(--violet); font-size: 12px; font-weight: 800; text-transform: uppercase; }
     .dashboard-grid { display: grid; gap: 16px; max-width: 1280px; margin: 0 auto; }
-    .overview-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(128px, .45fr)); gap: 12px; }
-    .latest-card, .metric-card, .run-stack { border: 1px solid var(--line); border-radius: 8px; background: linear-gradient(180deg, rgba(29,31,37,.96), rgba(18,19,24,.96)); box-shadow: 0 18px 70px rgba(0,0,0,.25); }
-    .latest-card { padding: 18px; min-height: 184px; display: grid; align-content: start; gap: 10px; }
-    .latest-card.empty { align-content: center; }
-    .metric-card { padding: 16px; display: grid; align-content: space-between; min-height: 118px; }
-    .metric-card span { color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; }
-    .metric-card strong { font-size: 30px; line-height: 1; }
+    .overview-grid { display: grid; grid-template-columns: minmax(240px, 1fr) repeat(3, max-content); gap: 8px; align-items: stretch; }
+    .status-card, .metric-card, .run-stack { border: 1px solid var(--line); border-radius: 8px; background: linear-gradient(180deg, rgba(29,31,37,.96), rgba(18,19,24,.96)); box-shadow: 0 18px 70px rgba(0,0,0,.25); }
+    .status-card { min-height: 58px; padding: 10px 12px; display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: center; }
+    .status-card span { color: var(--muted); font-size: 11px; font-weight: 800; text-transform: uppercase; }
+    .status-card strong { font-size: 16px; line-height: 1.1; }
+    .status-card small { grid-column: 1 / -1; color: var(--muted); overflow-wrap: anywhere; }
+    .metric-card { min-width: 78px; min-height: 58px; padding: 9px 11px; display: grid; gap: 2px; align-content: center; }
+    .metric-card span { color: var(--muted); font-size: 10px; font-weight: 800; text-transform: uppercase; }
+    .metric-card strong { font-size: 20px; line-height: 1; }
     .stack-list { display: grid; gap: 12px; }
     .run-stack { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(300px, .9fr); overflow: hidden; }
     .run-main { padding: 16px; display: grid; gap: 10px; border-right: 1px solid var(--line); }
@@ -1456,8 +1815,8 @@ export function renderWikiDashboardHtml(notes) {
     form { margin: 0; }
     .muted { color: var(--muted); }
     .small { font-size: 13px; }
-    @media (max-width: 980px) { .overview-grid { grid-template-columns: 1fr 1fr; } .latest-card { grid-column: 1 / -1; } .run-stack { grid-template-columns: 1fr; } .run-main { border-right: 0; border-bottom: 1px solid var(--line); } }
-    @media (max-width: 760px) { header { padding: 16px; } main { padding: 14px; } .header-row { display: grid; } .actions { justify-content: flex-start; } .overview-grid { grid-template-columns: 1fr; } .attached-note { grid-template-columns: 1fr; } }
+    @media (max-width: 980px) { .overview-grid { grid-template-columns: 1fr repeat(3, max-content); } .run-stack { grid-template-columns: 1fr; } .run-main { border-right: 0; border-bottom: 1px solid var(--line); } }
+    @media (max-width: 760px) { header { padding: 16px; } main { padding: 14px; } .header-row { display: grid; } .actions { justify-content: flex-start; } .overview-grid { grid-template-columns: 1fr 1fr 1fr; } .status-card { grid-column: 1 / -1; } .attached-note { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -1465,23 +1824,23 @@ export function renderWikiDashboardHtml(notes) {
     <div class="header-row">
       <div>
         <p class="eyebrow">Loop Wiki</p>
-        <h1>Second Brain</h1>
+        <h1>${escapeHtml(text.secondBrain)}</h1>
       </div>
       <nav class="actions" aria-label="Wiki views">
-        <a class="button" href="/graph">Graph View</a>
+        <a class="button" href="/graph">${escapeHtml(text.graphView)}</a>
       </nav>
     </div>
   </header>
   <main>
     <section class="dashboard-grid">
       <section class="overview-grid">
-        ${latest}
-        <div class="metric-card"><span>Runs</span><strong>${runNotes.length}</strong></div>
-        <div class="metric-card"><span>Attached</span><strong>${attachedNotes.length}</strong></div>
-        <div class="metric-card"><span>Total</span><strong>${notes.length}</strong></div>
+        ${recentStatus}
+        <div class="metric-card"><span>${escapeHtml(text.runs)}</span><strong>${runNotes.length}</strong></div>
+        <div class="metric-card"><span>${escapeHtml(text.attached)}</span><strong>${attachedNotes.length}</strong></div>
+        <div class="metric-card"><span>${escapeHtml(text.total)}</span><strong>${notes.length}</strong></div>
       </section>
       <section>
-        <div class="section-title-row stack-heading"><h2>Loop Stack</h2><span>${notes.length} notes</span></div>
+        <div class="section-title-row stack-heading"><h2>${escapeHtml(text.loopStack)}</h2><span>${notes.length} ${escapeHtml(text.notes)}</span></div>
         <div class="stack-list">${stackHtml}</div>
       </section>
     </section>
@@ -1494,17 +1853,19 @@ export function renderWikiDashboardHtml(notes) {
  * @param {WikiIndexEntry[]} notes
  */
 export function renderWikiGraphHtml(notes) {
+  const locale = localeForNotes(notes);
+  const text = wikiText(locale);
   const edges = graphEdges(notes);
   const noteById = new Map(notes.map((note) => [note.id, note]));
   const edgeSummary = edges.length === 0
-    ? "<p class=\"empty\">No graph links yet. Repeated objectives will connect automatically.</p>"
+    ? `<p class="empty">${escapeHtml(locale === "ko" ? "아직 그래프 연결이 없습니다. 반복되는 목적은 자동으로 연결됩니다." : "No graph links yet. Repeated objectives will connect automatically.")}</p>`
     : `<ul>${edges.slice(0, 8).map((edge) => {
         const source = noteById.get(edge.source);
         const target = noteById.get(edge.target);
         return `<li><strong>${escapeHtml(source ? truncateText(source.title, 42) : edge.source)}</strong> ${escapeHtml(edge.relationship)} <strong>${escapeHtml(target ? truncateText(target.title, 42) : edge.target)}</strong></li>`;
       }).join("")}</ul>`;
   return `<!doctype html>
-<html lang="en">
+<html lang="${text.lang}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1546,14 +1907,14 @@ export function renderWikiGraphHtml(notes) {
 <body>
   <header>
     <div>
-      <h1>Graph View</h1>
+      <h1>${escapeHtml(text.graphView)}</h1>
     </div>
-    <a class="button" href="/">Back to notes</a>
+    <a class="button" href="/">${escapeHtml(text.backToNotes)}</a>
   </header>
   <main>
     <section class="graph-stage">${renderGraphSvg(notes)}</section>
     <aside class="side-panel">
-      <h2>Readable Connections</h2>
+      <h2>${escapeHtml(text.readableConnections)}</h2>
       ${edgeSummary}
     </aside>
   </main>
@@ -1566,16 +1927,18 @@ export function renderWikiGraphHtml(notes) {
  * @param {{ noteId?: string }} [options]
  */
 export function renderMarkdownHtml(markdown, { noteId } = {}) {
+  const locale = hasHangul(markdown) ? "ko" : "en";
+  const text = wikiText(locale);
   const toolbar = noteId
     ? `<nav class="toolbar" aria-label="Note actions">
-        <a class="button" href="/">Back to notes</a>
+        <a class="button" href="/">${escapeHtml(text.backToNotes)}</a>
         <form method="post" action="/notes/${encodeURIComponent(noteId)}/delete">
-          <button class="button danger" type="submit">Delete note</button>
+          <button class="button danger" type="submit">${escapeHtml(text.delete)}</button>
         </form>
       </nav>`
-    : `<nav class="toolbar" aria-label="Note actions"><a class="button" href="/">Back to notes</a></nav>`;
+    : `<nav class="toolbar" aria-label="Note actions"><a class="button" href="/">${escapeHtml(text.backToNotes)}</a></nav>`;
   return `<!doctype html>
-<html lang="en">
+<html lang="${text.lang}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1613,39 +1976,232 @@ export function renderMarkdownHtml(markdown, { noteId } = {}) {
 }
 
 /**
- * @param {{ id: string, log: string }} input
+ * @param {unknown} state
  */
-export function renderRunLogHtml({ id, log }) {
-  const content = log.trim() ? escapeHtml(log) : "No log output recorded yet.";
+function rawSessionFromState(state) {
+  return isRecord(state) && isRecord(state.session) ? state.session : null;
+}
+
+/** @param {string} value */
+function shellQuote(value) {
+  if (/^[A-Za-z0-9_/:=.,@%+-]+$/.test(value)) {
+    return value;
+  }
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+/** @param {string[]} args */
+function shellCommand(args) {
+  return args.map(shellQuote).join(" ");
+}
+
+/**
+ * @param {string} cwd
+ * @param {string} command
+ */
+function commandInCwd(cwd, command) {
+  return `cd ${shellQuote(cwd)} && ${command}`;
+}
+
+/**
+ * @param {string} id
+ * @param {string | undefined} stateDir
+ */
+function followLogCommand(id, stateDir) {
+  const args = ["loop", "logs", id, "--follow"];
+  if (stateDir && stateDir !== ".loop") {
+    args.push("--state-dir", stateDir);
+  }
+  return shellCommand(args);
+}
+
+/** @param {string} log */
+function codexSessionIdFromLog(log) {
+  return log.match(/\bsession id:\s*([0-9a-f]{8}-[0-9a-f-]{13,})/i)?.[1] ?? null;
+}
+
+/**
+ * @param {unknown} state
+ * @param {string} log
+ */
+function codexResumeCommand(state, log) {
+  const session = rawSessionFromState(state);
+  const agent = typeof session?.agent === "string" ? session.agent : undefined;
+  if (!session || agent !== "codex") {
+    return null;
+  }
+  const codexSessionId = codexSessionIdFromLog(log);
+  const command = codexSessionId
+    ? shellCommand(["codex", "resume", "--include-non-interactive", codexSessionId])
+    : shellCommand(["codex", "resume", "--last", "--include-non-interactive"]);
+  const cwd = typeof session.cwd === "string" ? session.cwd : undefined;
+  return cwd ? commandInCwd(cwd, command) : command;
+}
+
+/** @param {unknown} value */
+function jsonScript(value) {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
+/**
+ * @param {{ id: string, log: string, state?: import("./run-state.js").LoopRunState | null, stateDir?: string }} input
+ */
+export function renderRunLogHtml({ id, log, state = null, stateDir }) {
+  const locale = isRecord(state) && typeof state.objective === "string" && hasHangul(state.objective)
+    ? "ko"
+    : hasHangul(log) ? "ko" : "en";
+  const text = wikiText(locale);
+  const content = log.trim() ? escapeHtml(log) : escapeHtml(text.outputEmpty);
+  const session = rawSessionFromState(state);
+  const sessionLabelText = sessionLabel(normalizeSession(session), locale);
+  const status = isRecord(state) && typeof state.status === "string" ? state.status : text.notRecorded;
+  const phase = isRecord(state) && typeof state.phase === "string" ? state.phase : text.notRecorded;
+  const statusText = status === text.notRecorded ? status : displayStatus(status, locale);
+  const phaseText = phase === text.notRecorded ? phase : displayPhase(phase, locale);
+  const objective = isRecord(state) && typeof state.objective === "string" ? state.objective : id;
+  const logCommand = followLogCommand(id, stateDir);
+  const resumeCommand = codexResumeCommand(state, log);
+  const boot = jsonScript({
+    id,
+    emptyText: text.outputEmpty,
+    pollingHint: text.pollingHint
+  });
   return `<!doctype html>
-<html lang="en">
+<html lang="${text.lang}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Loop Run Log</title>
   <style>
-    :root { color-scheme: dark; --ink: #f4f0e8; --muted: #9da0a6; --line: #2a2b31; --panel: #15161a; --page: #090a0d; --blue: #8bd3ff; }
+    :root { color-scheme: dark; --ink: #f4f0e8; --muted: #9da0a6; --line: #2a2b31; --panel: #15161a; --page: #090a0d; --blue: #8bd3ff; --green: #77d99a; --amber: #f4c95d; --red: #ff7b72; }
     * { box-sizing: border-box; }
     body { margin: 0; font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); background: var(--page); }
-    main { max-width: 1100px; margin: 0 auto; padding: 24px 18px 48px; }
-    header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 12px; }
-    h1 { margin: 0; font-size: 24px; line-height: 1.2; overflow-wrap: anywhere; }
+    body::before { content: ""; position: fixed; inset: 0; pointer-events: none; background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px); background-size: 32px 32px; mask-image: linear-gradient(to bottom, rgba(0,0,0,.7), rgba(0,0,0,.12)); }
+    main { position: relative; max-width: 1240px; margin: 0 auto; padding: 24px 18px 48px; }
+    header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 14px; }
+    h1 { margin: 0; font-size: 25px; line-height: 1.15; overflow-wrap: anywhere; }
+    h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; color: var(--muted); letter-spacing: 0; }
     p { margin: 6px 0 0; color: var(--muted); }
-    pre { margin: 0; min-height: 62vh; padding: 16px; border: 1px solid var(--line); border-radius: 8px; overflow: auto; background: #050609; color: #f8fafc; white-space: pre-wrap; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px; align-items: start; }
+    .terminal, .side-card { border: 1px solid var(--line); border-radius: 8px; background: #050609; box-shadow: 0 18px 70px rgba(0,0,0,.28); }
+    .terminal-bar { display: flex; justify-content: space-between; gap: 10px; align-items: center; min-height: 38px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: #101116; }
+    .traffic { display: flex; gap: 6px; }
+    .traffic span { width: 10px; height: 10px; border-radius: 999px; background: var(--muted); opacity: .75; }
+    .traffic span:nth-child(1) { background: var(--red); }
+    .traffic span:nth-child(2) { background: var(--amber); }
+    .traffic span:nth-child(3) { background: var(--green); }
+    .live-pill { display: inline-flex; align-items: center; gap: 7px; color: var(--green); font-size: 12px; font-weight: 800; }
+    .live-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--green); box-shadow: 0 0 16px rgba(119,217,154,.75); animation: pulse 1.2s ease-in-out infinite; }
+    pre { margin: 0; min-height: 68vh; max-height: 72vh; padding: 16px; overflow: auto; color: #f8fafc; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    #cursor { display: inline-block; width: 8px; height: 16px; margin-left: 2px; background: var(--blue); vertical-align: -2px; animation: blink 1s steps(2, start) infinite; }
+    .side-card { display: grid; gap: 14px; padding: 14px; background: var(--panel); }
+    .meta { display: grid; gap: 8px; }
+    .meta-row { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 10px; color: var(--muted); font-size: 13px; }
+    .meta-row strong { color: var(--ink); font-weight: 700; overflow-wrap: anywhere; }
+    .command-card { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+    .command-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: stretch; }
+    code { display: block; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; background: #0b0c10; color: #e7edf5; overflow-x: auto; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
     .button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 7px 12px; border-radius: 7px; border: 1px solid var(--line); background: #0d0e12; color: var(--blue); font-weight: 800; text-decoration: none; white-space: nowrap; }
+    button.button { cursor: pointer; font: inherit; }
+    .status { display: inline-flex; align-items: center; width: fit-content; min-height: 22px; padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(244,201,93,.35); color: var(--amber); background: rgba(244,201,93,.08); font-weight: 800; }
+    .status-complete { color: var(--green); background: rgba(119,217,154,.08); border-color: rgba(119,217,154,.35); }
+    .status-risk { color: var(--red); background: rgba(255,123,114,.08); border-color: rgba(255,123,114,.35); }
+    .small { font-size: 12px; }
+    @keyframes pulse { 0%, 100% { opacity: .45; transform: scale(.88); } 50% { opacity: 1; transform: scale(1.08); } }
+    @keyframes blink { 0%, 45% { opacity: 1; } 46%, 100% { opacity: 0; } }
+    @media (max-width: 900px) { header { display: grid; } .layout { grid-template-columns: 1fr; } pre { min-height: 58vh; max-height: none; } }
   </style>
 </head>
 <body>
   <main>
     <header>
       <div>
-        <h1>Run Log</h1>
-        <p>${escapeHtml(id)}</p>
+        <h1>${escapeHtml(text.liveRunLog)}</h1>
+        <p>${escapeHtml(objective)}</p>
       </div>
-      <a class="button" href="/">Back to notes</a>
+      <a class="button" href="/">${escapeHtml(text.backToNotes)}</a>
     </header>
-    <pre>${content}</pre>
+    <section class="layout">
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="traffic" aria-hidden="true"><span></span><span></span><span></span></div>
+          <span class="live-pill"><span class="live-dot"></span>${escapeHtml(text.liveTail)}</span>
+        </div>
+        <pre id="log-scroll"><code id="log-output">${content}</code><span id="cursor" aria-hidden="true"></span></pre>
+      </div>
+      <aside class="side-card">
+        <section class="meta">
+          <div class="meta-row"><span>${escapeHtml(text.runId)}</span><strong>${escapeHtml(id)}</strong></div>
+          <div class="meta-row"><span>${escapeHtml(text.status)}</span><strong><span class="status ${statusClass(status)}">${escapeHtml(statusText)}</span></strong></div>
+          <div class="meta-row"><span>${escapeHtml(text.phase)}</span><strong>${escapeHtml(phaseText)}</strong></div>
+          <div class="meta-row"><span>${escapeHtml(text.agentSession)}</span><strong>${escapeHtml(sessionLabelText)}</strong></div>
+        </section>
+        <section class="command-card">
+          <h2>${escapeHtml(text.commandToWatch)}</h2>
+          <div class="command-row">
+            <code>${escapeHtml(logCommand)}</code>
+            <button class="button" type="button" data-copy="${escapeHtml(logCommand)}">${escapeHtml(text.copy)}</button>
+          </div>
+          <p class="small" id="live-meta">${escapeHtml(text.pollingHint)}</p>
+        </section>
+        <section class="command-card">
+          <h2>${escapeHtml(text.commandToResume)}</h2>
+          ${resumeCommand ? `
+          <div class="command-row">
+            <code>${escapeHtml(resumeCommand)}</code>
+            <button class="button" type="button" data-copy="${escapeHtml(resumeCommand)}">${escapeHtml(text.copy)}</button>
+          </div>` : `<p class="small">${escapeHtml(text.commandUnavailable)}</p>`}
+        </section>
+      </aside>
+    </section>
   </main>
+  <script type="application/json" id="boot">${boot}</script>
+  <script>
+    const boot = JSON.parse(document.getElementById("boot").textContent || "{}");
+    const output = document.getElementById("log-output");
+    const scrollBox = document.getElementById("log-scroll");
+    const meta = document.getElementById("live-meta");
+    const emptyText = boot.emptyText || "";
+    function renderLog(log) {
+      const next = log && log.trim() ? log : emptyText;
+      const wasNearBottom = scrollBox.scrollTop + scrollBox.clientHeight >= scrollBox.scrollHeight - 48;
+      output.textContent = next;
+      if (wasNearBottom) {
+        scrollBox.scrollTop = scrollBox.scrollHeight;
+      }
+    }
+    async function pollLog() {
+      try {
+        const response = await fetch("/api/runs/" + encodeURIComponent(boot.id) + "/log", { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(String(response.status));
+        }
+        const payload = await response.json();
+        renderLog(payload.log || "");
+        if (meta) {
+          meta.textContent = (boot.pollingHint || "") + " " + new Date(payload.updatedAt || Date.now()).toLocaleTimeString();
+        }
+      } catch (error) {
+        if (meta) {
+          meta.textContent = String(error && error.message ? error.message : error);
+        }
+      }
+    }
+    for (const button of document.querySelectorAll("[data-copy]")) {
+      button.addEventListener("click", async () => {
+        const value = button.getAttribute("data-copy") || "";
+        await navigator.clipboard.writeText(value);
+        const previous = button.textContent;
+        button.textContent = ${JSON.stringify(text.copied)};
+        setTimeout(() => { button.textContent = previous; }, 900);
+      });
+    }
+    renderLog(output.textContent || "");
+    setInterval(pollLog, 1000);
+  </script>
 </body>
 </html>`;
 }

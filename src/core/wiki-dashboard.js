@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { once } from "node:events";
 
-import { readRunLog } from "./state-store.js";
+import { readRunLog, readRunState } from "./state-store.js";
 import {
   deleteWikiNote,
   listWikiNotes,
@@ -141,6 +141,24 @@ export function createWikiServer({
         response.end(`${JSON.stringify({ notes }, null, 2)}\n`);
         return;
       }
+      if (url.pathname.startsWith("/api/runs/") && url.pathname.endsWith("/log")) {
+        const id = decodeURIComponent(url.pathname.slice("/api/runs/".length, -"/log".length));
+        const [log, readState] = await Promise.all([
+          readRunLog(id, { stateDir }),
+          readRunState(id, { stateDir })
+        ]);
+        response.writeHead(200, {
+          "cache-control": "no-store",
+          "content-type": "application/json; charset=utf-8"
+        });
+        response.end(`${JSON.stringify({
+          id,
+          log,
+          state: readState.ok ? readState.state : null,
+          updatedAt: new Date().toISOString()
+        })}\n`);
+        return;
+      }
       if (url.pathname.startsWith("/notes/")) {
         const id = decodeURIComponent(url.pathname.slice("/notes/".length));
         const note = await readWikiNote(id, { stateDir });
@@ -150,9 +168,17 @@ export function createWikiServer({
       }
       if (url.pathname.startsWith("/runs/") && url.pathname.endsWith("/log")) {
         const id = decodeURIComponent(url.pathname.slice("/runs/".length, -"/log".length));
-        const log = await readRunLog(id, { stateDir });
+        const [log, readState] = await Promise.all([
+          readRunLog(id, { stateDir }),
+          readRunState(id, { stateDir })
+        ]);
         response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        response.end(renderRunLogHtml({ id, log }));
+        response.end(renderRunLogHtml({
+          id,
+          log,
+          state: readState.ok ? readState.state : null,
+          stateDir
+        }));
         return;
       }
       if (url.pathname === "/graph") {

@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, createWriteStream, existsSync, readFileSync, watchFile, unwatchFile } from "node:fs";
-import { join } from "node:path";
+import { appendFileSync, createWriteStream, existsSync, readFileSync, realpathSync, watchFile, unwatchFile } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 import {
@@ -543,6 +544,15 @@ function initializeGitBoundary(cwd) {
   }
 }
 
+/** @param {string} value */
+function realPathOrResolve(value) {
+  try {
+    return realpathSync(value);
+  } catch {
+    return resolve(value);
+  }
+}
+
 /**
  * @param {{ writeMode: boolean, expectedRoot?: string }} options
  */
@@ -550,7 +560,11 @@ function ensureProjectBoundary({ writeMode, expectedRoot }) {
   if (!writeMode || expectedRoot) {
     return;
   }
-  const cwd = process.cwd();
+  const cwd = realPathOrResolve(process.cwd());
+  const homeDirs = new Set([homedir(), process.env.HOME].filter(Boolean).map((dir) => realPathOrResolve(String(dir))));
+  if (homeDirs.has(cwd)) {
+    throw new Error(`Loop refuses to run write-capable agents from your home directory (${cwd}). Change into the project folder first, for example: cd /path/to/project && loop "your objective".`);
+  }
   if (existsSync(join(cwd, ".git"))) {
     return;
   }
@@ -983,7 +997,12 @@ async function runAgent({
   dashboardHost: host,
   dashboardPort: port
 }) {
-  ensureProjectBoundary({ writeMode, expectedRoot });
+  try {
+    ensureProjectBoundary({ writeMode, expectedRoot });
+  } catch (error) {
+    process.stderr.write(`Project boundary failed: ${errorMessage(error)}\n`);
+    process.exit(2);
+  }
   const { state, paths } = await writeInitialRunState({ objective, stateDir, writeMode, agent });
   const gate = evaluatePolicyGate(state, {
     mode: writeMode ? "write" : "read",

@@ -19,9 +19,11 @@ import {
   renderRunLogHtml,
   renderWikiDashboardHtml,
   renderWikiGraphHtml,
+  runLogPath,
   serveWikiDashboard,
   waitForDashboardReady,
   writeWikiForRunState,
+  writeRunState,
   writeWikiSupportingNote
 } from "../src/index.js";
 
@@ -78,6 +80,27 @@ test("writes canonical markdown and derived AI memory", async () => {
   assert.equal(memory.decisions.length, 3);
   assert.equal(notes.length, 1);
   assert.equal(notes[0].id, paths.id);
+});
+
+test("writes Korean wiki notes when the objective is Korean", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-wiki-ko-"));
+  const state = createRunState({
+    objective: "다크웨어 명품 전시 사이트 만들기",
+    now: new Date("2026-06-13T08:00:01.000Z")
+  });
+
+  const paths = await writeWikiForRunState(state, { stateDir });
+  const note = await readWikiNote(paths.id, { stateDir });
+  const memory = JSON.parse(await readFile(paths.memoryPath, "utf8"));
+
+  assert.match(note.markdown, /## 요약/);
+  assert.match(note.markdown, /## 목적/);
+  assert.match(note.markdown, /## 결정 기록/);
+  assert.match(note.markdown, /아직 기록된 검증 증거가 없습니다/);
+  assert.doesNotMatch(note.markdown, /## Narrative Summary/);
+  assert.doesNotMatch(note.markdown, /This note captures/);
+  assert.match(memory.summary, /이 노트는/);
+  assert.doesNotMatch(memory.summary, /This note captures/);
 });
 
 test("wiki note identity is stable for the same run state", () => {
@@ -291,6 +314,8 @@ test("dashboard links to a separate graph view", async () => {
   assert.match(html, /href="\/graph"/);
   assert.match(html, />Delete</);
   assert.match(html, /run-stack/);
+  assert.doesNotMatch(html, /Read Latest/);
+  assert.doesNotMatch(html, /latest-card/);
   assert.doesNotMatch(html, /Tokens/);
   assert.doesNotMatch(html, /graph-edge/);
   assert.match(graphHtml, /Graph View/);
@@ -301,15 +326,60 @@ test("dashboard links to a separate graph view", async () => {
   assert.match(graphHtml, /graph-kind-run/);
 });
 
-test("dashboard renders run log pages", () => {
-  const html = renderRunLogHtml({
-    id: "run-1",
-    log: "agent streamed line\n"
+test("dashboard localizes Korean notes and does not duplicate the latest run card", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-wiki-dashboard-ko-"));
+  const state = createRunState({
+    objective: "다크웨어 명품 전시 사이트 만들기",
+    now: new Date("2026-06-13T08:00:00.000Z")
   });
 
-  assert.match(html, /Run Log/);
+  await writeWikiForRunState(state, { stateDir, now: new Date("2026-06-13T08:01:00.000Z") });
+  const notes = await listWikiNotes({ stateDir });
+  const html = renderWikiDashboardHtml(notes);
+  const graphHtml = renderWikiGraphHtml(notes);
+
+  assert.match(html, /<html lang="ko">/);
+  assert.match(html, /세컨드 브레인/);
+  assert.match(html, /그래프 보기/);
+  assert.match(html, /루프 스택/);
+  assert.match(html, /노트 읽기/);
+  assert.doesNotMatch(html, /Read Latest/);
+  assert.doesNotMatch(html, /latest-card/);
+  assert.doesNotMatch(html, /metric-card--wide/);
+  assert.match(html, /status-card/);
+  assert.doesNotMatch(html, /This note captures/);
+  assert.match(graphHtml, /<html lang="ko">/);
+  assert.match(graphHtml, /읽기 쉬운 연결/);
+});
+
+test("dashboard renders run log pages", () => {
+  const state = {
+    ...createRunState({
+      objective: "다크웨어 명품 전시 사이트 만들기",
+      now: new Date("2026-06-13T08:00:00.000Z")
+    }),
+    session: {
+      agent: "codex",
+      status: "running",
+      pid: 1234,
+      cwd: "/tmp/darkwear"
+    }
+  };
+  const html = renderRunLogHtml({
+    id: state.id,
+    log: "agent streamed line\nsession id: 019ec4bd-7118-7443-8d6b-dce6b226eef3\n",
+    state,
+    stateDir: "/tmp/darkwear/.loop"
+  });
+
+  assert.match(html, /실시간 실행 로그/);
   assert.match(html, /agent streamed line/);
-  assert.match(html, /Back to notes/);
+  assert.match(html, /노트로 돌아가기/);
+  assert.match(html, /loop logs/);
+  assert.match(html, /--follow/);
+  assert.match(html, /--state-dir/);
+  assert.match(html, /codex resume --include-non-interactive 019ec4bd-7118-7443-8d6b-dce6b226eef3/);
+  assert.match(html, /라이브 테일/);
 });
 
 test("dashboard server serves the graph view route", async () => {
@@ -330,6 +400,41 @@ test("dashboard server serves the graph view route", async () => {
     assert.match(html, /Graph View/);
     assert.match(html, /Back to notes/);
     assert.match(html, /<svg viewBox="0 0 1100 680"/);
+  } finally {
+    if (served.server) {
+      served.server.close();
+      await once(served.server, "close");
+    }
+  }
+});
+
+test("dashboard server serves live run log API", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-wiki-log-api-"));
+  const state = {
+    ...createRunState({
+      objective: "Live log objective",
+      now: new Date("2026-06-13T08:00:00.000Z")
+    }),
+    session: {
+      agent: "codex",
+      status: "running",
+      pid: 4321,
+      cwd: "/tmp/live-log"
+    }
+  };
+  const port = await getFreePort();
+  await writeRunState(state, { stateDir });
+  await writeFile(runLogPath({ stateDir, id: state.id }), "agent streamed line\n");
+  const served = await serveWikiDashboard({ stateDir, port });
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/runs/${state.id}/log`);
+    const payload = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(payload.id, state.id);
+    assert.equal(payload.log, "agent streamed line\n");
+    assert.equal(payload.state.id, state.id);
   } finally {
     if (served.server) {
       served.server.close();

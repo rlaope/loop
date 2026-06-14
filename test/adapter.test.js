@@ -589,6 +589,46 @@ test("CLI run creates a nested project boundary instead of using a parent repo",
   assert.equal(output.agent, "codex");
 });
 
+test("CLI run refuses write-capable agents from the home directory", async () => {
+  const repo = await mkdtemp(join(tmpdir(), "loop-home-guard-"));
+  const fakeBin = await mkdtemp(join(tmpdir(), "loop-fake-bin-"));
+  const stateDir = join(repo, ".loop");
+  const fakeCodex = join(fakeBin, "codex");
+  await writeFile(fakeCodex, [
+    "#!/usr/bin/env node",
+    "throw new Error('codex should not start from home directory');"
+  ].join("\n"));
+  await chmod(fakeCodex, 0o755);
+  git(["init", "-b", "main"], repo);
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      resolve("bin/loop.js"),
+      "run",
+      "--agent",
+      "codex",
+      "--no-interview",
+      "--state-dir",
+      stateDir,
+      "Build a darkwear luxury website MVP"
+    ],
+    {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: repo,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`
+      }
+    }
+  );
+
+  assert.equal(result.status, 2);
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /refuses to run write-capable agents from your home directory/);
+});
+
 test("CLI prompt defaults to run mode when an agent is explicit", async () => {
   const repo = await mkdtemp(join(tmpdir(), "loop-default-run-repo-"));
   const fakeBin = await mkdtemp(join(tmpdir(), "loop-fake-bin-"));
