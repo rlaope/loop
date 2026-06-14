@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { emitKeypressEvents } from "node:readline";
 import { createInterface } from "node:readline/promises";
@@ -397,6 +397,10 @@ function errorMessage(error) {
  * @param {string} target
  */
 function openTarget(target) {
+  if (process.env.LOOP_OPEN_TARGET_LOG) {
+    appendFileSync(process.env.LOOP_OPEN_TARGET_LOG, `${target}\n`);
+    return;
+  }
   if (!process.stdout.isTTY) {
     return;
   }
@@ -515,6 +519,7 @@ async function handleWikiCommand() {
     try {
       const served = await serveWikiDashboard({ stateDir, host, port });
       process.stdout.write(`Loop Wiki dashboard: ${served.url}\n`);
+      openTarget(served.url);
       if (served.server) {
         await new Promise(() => {});
       }
@@ -604,9 +609,17 @@ async function maybeStartDashboardForRun({ stateDir, explicitFlag, host, port })
     process.stderr.write(`Loop Wiki dashboard port ${port} is occupied by another service; not starting dashboard.\n`);
     return;
   }
+  const url = dashboardUrl({ host, port });
+  if (status.running) {
+    if (process.stdout.isTTY || explicitFlag) {
+      process.stdout.write(`Loop Wiki dashboard: ${url}\n`);
+    }
+    openTarget(url);
+    return;
+  }
   let consent = false;
   const initialAction = dashboardActionForRun({
-    dashboardRunning: status.running,
+    dashboardRunning: false,
     stdinTTY: Boolean(process.stdin.isTTY),
     stdoutTTY: Boolean(process.stdout.isTTY),
     explicitFlag
@@ -633,7 +646,8 @@ async function maybeStartDashboardForRun({ stateDir, explicitFlag, host, port })
   });
   const ready = await waitForDashboardReady({ host, port });
   if (ready.running) {
-    process.stdout.write(`Loop Wiki dashboard: ${dashboardUrl({ host, port })}\n`);
+    process.stdout.write(`Loop Wiki dashboard: ${url}\n`);
+    openTarget(url);
     return;
   }
   process.stderr.write(`Loop Wiki dashboard did not confirm startup${pid ? ` (pid ${pid})` : ""}.\n`);

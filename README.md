@@ -109,6 +109,11 @@ If the prompt is too ambiguous for a loop, the CLI asks a short deep-interview
 style set of questions in the terminal, closes the interview, records the
 clarified objective, and then starts the selected coding agent.
 
+When a Loop Wiki dashboard is already running, `loop "prompt"` and `loop run`
+open it automatically. If it is not running in an interactive terminal, Loop
+asks whether to start it; choosing Yes starts the localhost dashboard and opens
+it in your browser.
+
 Dry-run mode is still available when you only want durable state and a wiki
 note without source edits:
 
@@ -125,11 +130,11 @@ loop wiki open <note-id>
 loop wiki
 ```
 
-`loop wiki` starts a localhost-only dashboard for `.loop/wiki`. The markdown
-note under `.loop/wiki/user` is canonical; AI memory, index, and graph files are
-derived from it. `loop run` does not start the dashboard in non-interactive
-automation unless `--wiki-dashboard` is passed. Most users can ignore that flag
-and open the dashboard later with `loop wiki`.
+`loop wiki` starts and opens a localhost-only dashboard for `.loop/wiki`. The
+markdown note under `.loop/wiki/user` is canonical; AI memory, index, and graph
+files are derived from it. `loop run` does not start the dashboard in
+non-interactive automation unless `--wiki-dashboard` is passed. Most users can
+ignore that flag and open the dashboard later with `loop wiki`.
 
 To verify the package:
 

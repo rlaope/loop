@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { createServer as createNetServer } from "node:net";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -91,6 +92,95 @@ function gitRoot(cwd) {
   return execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8" }).trim();
 }
 
+async function getFreePort() {
+  const server = createNetServer();
+  server.listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected TCP server to listen on an address object");
+  }
+  const { port } = address;
+  await new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(undefined);
+    });
+  });
+  return port;
+}
+
+/**
+ * @param {number} port
+ * @returns {Promise<import("node:child_process").ChildProcess>}
+ */
+async function startExternalDashboard(port) {
+  const code = [
+    "import { createServer } from 'node:http';",
+    "const port = Number(process.argv[1]);",
+    "const server = createServer((request, response) => {",
+    "  if (request.url === '/health') {",
+    "    response.writeHead(200, { 'content-type': 'application/json' });",
+    "    response.end(JSON.stringify({ ok: true, name: 'loop-wiki' }) + '\\n');",
+    "    return;",
+    "  }",
+    "  response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });",
+    "  response.end('<!doctype html><title>Loop Wiki</title>');",
+    "});",
+    "server.listen(port, '127.0.0.1', () => process.stdout.write('ready\\n'));",
+    "process.on('SIGTERM', () => server.close(() => process.exit(0)));"
+  ].join("\n");
+  const child = spawn(process.execPath, ["--input-type=module", "-e", code, String(port)], {
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  let stderr = "";
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`dashboard test server did not start: ${stderr}`));
+    }, 1500);
+    const cleanup = () => {
+      clearTimeout(timeout);
+      child.stdout.off("data", onStdout);
+      child.stderr.off("data", onStderr);
+      child.off("exit", onExit);
+    };
+    /** @param {string} chunk */
+    const onStdout = (chunk) => {
+      if (chunk.includes("ready")) {
+        cleanup();
+        resolve(undefined);
+      }
+    };
+    /** @param {string} chunk */
+    const onStderr = (chunk) => {
+      stderr += chunk;
+    };
+    /** @param {number | null} code */
+    const onExit = (code) => {
+      cleanup();
+      reject(new Error(`dashboard test server exited before ready: ${code}; ${stderr}`));
+    };
+    child.stdout.on("data", onStdout);
+    child.stderr.on("data", onStderr);
+    child.once("exit", onExit);
+  });
+  return child;
+}
+
+/** @param {import("node:child_process").ChildProcess} child */
+async function stopExternalProcess(child) {
+  if (child.exitCode !== null) {
+    return;
+  }
+  child.kill("SIGTERM");
+  await new Promise((resolve) => child.once("exit", resolve));
+}
+
 test("manifest capability matches explicit CLI surfaces", async () => {
   const manifest = JSON.parse(await readFile(".codex-plugin/plugin.json", "utf8"));
   const help = execFileSync(process.execPath, ["bin/loop.js", "--help"], { encoding: "utf8" });
@@ -133,6 +223,33 @@ test("CLI accepts equals-style option values", async () => {
   assert.equal(parsed.ok, true);
   assert.ok(parsed.paths.jsonPath.startsWith(stateDir));
   assert.ok(parsed.wikiPaths.memoryPath);
+});
+
+test("CLI wiki serve opens an already-running dashboard URL", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-cli-wiki-open-state-"));
+  const openLog = join(stateDir, "open-targets.log");
+  const port = await getFreePort();
+  const dashboard = await startExternalDashboard(port);
+
+  try {
+    const output = execFileSync(
+      process.execPath,
+      ["bin/loop.js", "wiki", "serve", "--state-dir", stateDir, "--port", String(port)],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          LOOP_OPEN_TARGET_LOG: openLog
+        }
+      }
+    );
+    const opened = await readFile(openLog, "utf8");
+
+    assert.match(output, new RegExp(`Loop Wiki dashboard: http://127\\.0\\.0\\.1:${port}`));
+    assert.equal(opened.trim(), `http://127.0.0.1:${port}`);
+  } finally {
+    await stopExternalProcess(dashboard);
+  }
 });
 
 test("CLI rejects unknown and malformed options", () => {
@@ -219,6 +336,58 @@ test("CLI codex agent mode runs through policy gate and records state", async ()
   assert.ok(codexArgs.includes("--sandbox"));
   assert.ok(codexArgs.includes("workspace-write"));
   assert.match(output.wikiPaths.notePath, /wiki\/user/);
+});
+
+test("CLI run opens an already-running dashboard URL", async () => {
+  const repo = await mkdtemp(join(tmpdir(), "loop-run-open-dashboard-repo-"));
+  const fakeBin = await mkdtemp(join(tmpdir(), "loop-fake-bin-"));
+  const stateDir = join(repo, ".loop");
+  const openLog = join(repo, "open-targets.log");
+  const fakeCodex = join(fakeBin, "codex");
+  const port = await getFreePort();
+  await writeFile(fakeCodex, [
+    "#!/usr/bin/env node",
+    "import { writeFileSync } from 'node:fs';",
+    "writeFileSync('codex-args.json', JSON.stringify(process.argv.slice(2), null, 2));"
+  ].join("\n"));
+  await chmod(fakeCodex, 0o755);
+  git(["init", "-b", "main"], repo);
+  const dashboard = await startExternalDashboard(port);
+
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        resolve("bin/loop.js"),
+        "run",
+        "--agent",
+        "codex",
+        "--no-interview",
+        "--state-dir",
+        stateDir,
+        "--port",
+        String(port),
+        "Build a darkwear luxury website MVP"
+      ],
+      {
+        cwd: repo,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          LOOP_OPEN_TARGET_LOG: openLog
+        }
+      }
+    );
+    const output = JSON.parse(result.stdout);
+    const opened = await readFile(openLog, "utf8");
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(output.agent, "codex");
+    assert.equal(opened.trim(), `http://127.0.0.1:${port}`);
+  } finally {
+    await stopExternalProcess(dashboard);
+  }
 });
 
 test("CLI run initializes a local git repo when none exists", async () => {
