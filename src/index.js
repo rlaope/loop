@@ -56,7 +56,7 @@ export function printHelp(stream) {
   stream.write(`  --read-only      Run the selected agent without write permissions.\n`);
   stream.write(`  --objective      Objective for the Loop run.\n`);
   stream.write(`  --state-dir      Directory for durable Loop state. Defaults to .loop.\n`);
-  stream.write(`  --wiki-dashboard  Start and open the local Loop Wiki dashboard for non-interactive run mode.\n`);
+  stream.write(`  --wiki-dashboard  Start the local Loop Wiki dashboard during run mode.\n`);
   stream.write(`  --port           Port for Loop Wiki dashboard. Defaults to 3846.\n`);
   stream.write(`  --isolation      Write isolation mode: branch, worktree, or local.\n`);
   stream.write(`  --acknowledge-local  Explicitly acknowledge local-mode write risk.\n`);
