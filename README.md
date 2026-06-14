@@ -82,8 +82,8 @@ If the folder is not a git repository yet, `loop` initializes a local git
 repository there first. That keeps write-capable agent work bounded to the
 folder you started from, even when the folder lives inside a larger parent repo.
 
-`loop "prompt"` opens an arrow-key agent picker for the prototype. The explicit
-form is `loop run "prompt"`.
+`loop "prompt"` asks you to type `1` or `2` to choose the prototype agent. The
+explicit form is `loop run "prompt"`.
 
 - `codex`
 - `claudecode`

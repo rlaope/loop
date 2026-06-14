@@ -52,7 +52,7 @@ export function printHelp(stream) {
   stream.write(`  --help, -h       Show this help message.\n`);
   stream.write(`  --version, -v    Show the package version.\n`);
   stream.write(`  --dry-run        Write durable Loop state without source edits.\n`);
-  stream.write(`  --agent          Select codex or claudecode without the TUI picker.\n`);
+  stream.write(`  --agent          Select codex or claudecode without the 1/2 prompt.\n`);
   stream.write(`  --read-only      Run the selected agent without write permissions.\n`);
   stream.write(`  --objective      Objective for the Loop run.\n`);
   stream.write(`  --state-dir      Directory for durable Loop state. Defaults to .loop.\n`);

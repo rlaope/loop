@@ -3,7 +3,6 @@
 import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { emitKeypressEvents } from "node:readline";
 import { createInterface } from "node:readline/promises";
 
 import {
@@ -223,115 +222,42 @@ async function askRequired(rl, question) {
 
 /**
  * @template T
- * @param {{ title: string, options: Array<{ label: string, value: T }>, escapeIndex?: number }} config
+ * @param {{ title: string, options: Array<{ label: string, value: T }>, defaultIndex?: number }} config
  * @returns {Promise<T>}
  */
-async function chooseWithArrows({ title, options, escapeIndex = 0 }) {
+async function chooseByNumber({ title, options, defaultIndex = 0 }) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error(`${title} requires an interactive terminal`);
   }
   if (options.length === 0) {
     throw new Error(`${title} has no options`);
   }
-  emitKeypressEvents(process.stdin);
-  const previousRawMode = process.stdin.isRaw;
-  let inputRestored = false;
-  const restoreInput = () => {
-    if (inputRestored) {
-      return;
-    }
-    if (typeof process.stdin.setRawMode === "function") {
-      process.stdin.setRawMode(Boolean(previousRawMode));
-    }
-    process.stdin.pause();
-    inputRestored = true;
-  };
-  if (typeof process.stdin.setRawMode === "function") {
-    process.stdin.setRawMode(true);
-  }
-  process.stdin.resume();
-  let selected = 0;
-  let renderedLines = 0;
-  /** @param {number} lines */
-  const clearRenderedLines = (lines) => {
-    if (lines > 0) {
-      process.stdout.write(`\x1b[${lines}F\x1b[J`);
-    }
-  };
-  const render = () => {
-    clearRenderedLines(renderedLines);
-    const lines = [
-      title,
-      "Use arrow keys, then Enter.",
-      ...options.map((option, index) => `${index === selected ? "> " : "  "}${index + 1}) ${option.label}`)
-    ];
-    process.stdout.write(`${lines.join("\n")}\n`);
-    renderedLines = lines.length;
-  };
+  const safeDefaultIndex = options[defaultIndex] ? defaultIndex : 0;
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
-    render();
-    return await new Promise((resolve) => {
-      /**
-       * @param {string} _str
-       * @param {{ name?: string, sequence?: string, ctrl?: boolean }} key
-       */
-      const onKeypress = (_str, key) => {
-        const sequence = key.sequence ?? _str;
-        if ((key.ctrl === true && key.name === "c") || sequence === "\u0003") {
-          cancel();
-          return;
-        }
-        if (key.name === "up" || key.name === "left") {
-          selected = selected === 0 ? options.length - 1 : selected - 1;
-          render();
-          return;
-        }
-        if (key.name === "down" || key.name === "right" || key.name === "tab") {
-          selected = selected === options.length - 1 ? 0 : selected + 1;
-          render();
-          return;
-        }
-        if (key.name === "escape") {
-          const escapeOption = options[escapeIndex] ?? options[0];
-          cleanup(escapeOption.value, escapeOption.label);
-          return;
-        }
-        if (key.name === "return" || key.name === "enter" || sequence === "\r" || sequence === "\n") {
-          cleanup(options[selected].value, options[selected].label);
-        }
-      };
-      /**
-       * @param {T} value
-       * @param {string} [label]
-       */
-      const cleanup = (value, label) => {
-        process.stdin.off("keypress", onKeypress);
-        clearRenderedLines(renderedLines);
-        if (label) {
-          process.stdout.write(`${title} ${label}\n`);
-        }
-        renderedLines = 0;
-        resolve(value);
-      };
-      const cancel = () => {
-        process.stdin.off("keypress", onKeypress);
-        clearRenderedLines(renderedLines);
-        process.stdout.write(`${title} cancelled\n`);
-        renderedLines = 0;
-        restoreInput();
-        process.exit(130);
-      };
-      process.stdin.on("keypress", onKeypress);
-    });
+    process.stdout.write(`${title}\n`);
+    for (const [index, option] of options.entries()) {
+      process.stdout.write(`  ${index + 1}) ${option.label}\n`);
+    }
+    while (true) {
+      const answer = (await rl.question(`Select [${safeDefaultIndex + 1}]: `)).trim();
+      const selectedIndex = answer === "" ? safeDefaultIndex : Number(answer) - 1;
+      const selected = options[selectedIndex];
+      if (Number.isInteger(selectedIndex) && selected) {
+        process.stdout.write(`${title} ${selected.label}\n`);
+        return selected.value;
+      }
+      process.stdout.write(`Enter a number from 1 to ${options.length}.\n`);
+    }
   } finally {
-    restoreInput();
+    rl.close();
   }
 }
 
 /** @returns {Promise<"codex" | "claudecode">} */
 async function chooseAgent() {
   try {
-    const selectedAgent = await chooseWithArrows({
+    const selectedAgent = await chooseByNumber({
       title: "Select coding agent:",
       options: [
         { label: "codex", value: "codex" },
@@ -351,9 +277,8 @@ async function chooseDashboardStart() {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     return false;
   }
-  return chooseWithArrows({
+  return chooseByNumber({
     title: "Start Loop Wiki dashboard:",
-    escapeIndex: 1,
     options: [
       { label: "Yes", value: true },
       { label: "No", value: false }
