@@ -157,7 +157,8 @@ test("links previous notes with the same objective slug", async () => {
   assert.equal(memory.graph.links[0].title, "Same wiki objective");
   assert.equal(graph.edges.length, 1);
   assert.equal(graph.edges[0].target, noteIdForRunState(first));
-  assert.match(note.markdown, /- Same wiki objective - active\/intake/);
+  assert.match(note.markdown, /## Related Notes\n\n- Same wiki objective\n\n## Graph Links/);
+  assert.doesNotMatch(note.markdown, /active\/intake, updated/);
   assert.match(note.markdown, /- continues: Same wiki objective/);
   assert.match(note.markdown, /This note continues 1 earlier note for the same objective/);
   assert.match(note.markdown, /Open Graph View for the full map/);

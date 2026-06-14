@@ -366,27 +366,9 @@ function linkTargetId(link) {
   return filename.endsWith(".md") ? filename.slice(0, -3) : filename;
 }
 
-/** @param {string | undefined} value */
-function readableTimestamp(value) {
-  if (!value) {
-    return "unknown time";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
-}
-
 /** @param {WikiLink} link */
 function relatedNoteTitle(link) {
   return truncateText(stripMarkdown(link.title || "Previous Loop note"), 84);
-}
-
-/** @param {WikiLink} link */
-function relatedNoteSummary(link) {
-  const status = link.status && link.phase ? `${link.status}/${link.phase}` : link.status || link.phase || "previous run";
-  return `${status}, updated ${readableTimestamp(link.updatedAt)}.`;
 }
 
 /**
@@ -426,7 +408,7 @@ export function renderWikiNote(state, { id, links, paths = {} }) {
     : flags.map((flag) => `- ${flag.severity}: ${flag.kind} - ${flag.text}`).join("\n");
   const linkText = links.length === 0
     ? "No related notes yet."
-    : links.map((link) => `- ${relatedNoteTitle(link)} - ${relatedNoteSummary(link)}`).join("\n");
+    : links.map((link) => `- ${relatedNoteTitle(link)}`).join("\n");
   const decisions = decisionEntries(state);
   const decisionText = decisions
     .map((entry) => `- ${entry.decision} ${entry.rationale}`)
