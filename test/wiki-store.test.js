@@ -14,10 +14,27 @@ import {
   listWikiNotes,
   noteIdForRunState,
   readWikiNote,
+  renderMarkdownHtml,
+  renderWikiDashboardHtml,
+  renderWikiGraphHtml,
   serveWikiDashboard,
   waitForDashboardReady,
   writeWikiForRunState
 } from "../src/index.js";
+
+async function getFreePort() {
+  const server = createNetServer();
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected TCP server to listen on an address object");
+  }
+  const { port } = address;
+  server.close();
+  await once(server, "close");
+  return port;
+}
 
 test("writes canonical markdown and derived AI memory", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "loop-wiki-"));
@@ -43,15 +60,18 @@ test("writes canonical markdown and derived AI memory", async () => {
   const notes = await listWikiNotes({ stateDir });
 
   assert.match(paths.id, /^2026-06-13-build-darkwear-exhibit-080001000Z-[a-f0-9]{8}$/);
+  assert.match(note.markdown, /## Narrative Summary/);
   assert.match(note.markdown, /## Purpose/);
+  assert.match(note.markdown, /## Decision Log/);
+  assert.match(note.markdown, /## Graph Links/);
   assert.match(note.markdown, /## Token Usage/);
-  assert.match(note.markdown, /No explicit decisions recorded in run state/);
+  assert.doesNotMatch(note.markdown, /No explicit decisions recorded in run state/);
   assert.equal(memory.canonicalNote, `../user/${paths.id}.md`);
   assert.match(memory.derivedFromHash, /^sha256:/);
   assert.match(memory.generator.markdownHash, /^sha256:/);
   assert.equal(memory.tokens.total, null);
   assert.equal(memory.tokens.source, "unknown");
-  assert.deepEqual(memory.decisions, []);
+  assert.equal(memory.decisions.length, 3);
   assert.equal(notes.length, 1);
   assert.equal(notes[0].id, paths.id);
 });
@@ -127,9 +147,104 @@ test("links previous notes with the same objective slug", async () => {
   await writeWikiForRunState(first, { stateDir, now: new Date("2026-06-13T08:01:00.000Z") });
   const secondPaths = await writeWikiForRunState(second, { stateDir, now: new Date("2026-06-13T09:01:00.000Z") });
   const memory = JSON.parse(await readFile(secondPaths.memoryPath, "utf8"));
+  const graph = JSON.parse(await readFile(secondPaths.graphPath, "utf8"));
 
   assert.equal(memory.graph.links.length, 1);
   assert.equal(memory.graph.links[0].relationship, "continues");
+  assert.equal(graph.edges.length, 1);
+  assert.equal(graph.edges[0].target, noteIdForRunState(first));
+});
+
+test("renders markdown notes as readable semantic HTML", () => {
+  const html = renderMarkdownHtml([
+    "# Darkwear Exhibit",
+    "",
+    "> Loop Wiki note: sample",
+    "",
+    "## Narrative Summary",
+    "",
+    "This is a readable paragraph with **context** and `code`.",
+    "",
+    "- passed: npm test passed",
+    "- pending: manual QA",
+    "",
+    "| Field | Value |",
+    "| --- | --- |",
+    "| Status | active |"
+  ].join("\n"));
+
+  assert.match(html, /<article>/);
+  assert.match(html, /<h1>Darkwear Exhibit<\/h1>/);
+  assert.match(html, /<h2>Narrative Summary<\/h2>/);
+  assert.match(html, /<blockquote>Loop Wiki note: sample<\/blockquote>/);
+  assert.match(html, /<strong>context<\/strong>/);
+  assert.match(html, /<code>code<\/code>/);
+  assert.match(html, /<ul><li>passed: npm test passed<\/li><li>pending: manual QA<\/li><\/ul>/);
+  assert.match(html, /<table>/);
+  assert.doesNotMatch(html, /<main><pre>/);
+});
+
+test("markdown renderer avoids unsafe link schemes", () => {
+  const html = renderMarkdownHtml("[safe](../user/note.md) [unsafe](javascript:alert(1))");
+
+  assert.match(html, /href="\.\.\/user\/note\.md"/);
+  assert.match(html, /href="#"/);
+  assert.doesNotMatch(html, /javascript:alert/);
+});
+
+test("dashboard links to a separate graph view", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-wiki-dashboard-ui-"));
+  const first = createRunState({
+    objective: "Dashboard graph objective",
+    now: new Date("2026-06-13T08:00:00.000Z")
+  });
+  const second = createRunState({
+    objective: "Dashboard graph objective",
+    now: new Date("2026-06-13T09:00:00.000Z")
+  });
+
+  await writeWikiForRunState(first, { stateDir, now: new Date("2026-06-13T08:01:00.000Z") });
+  await writeWikiForRunState(second, { stateDir, now: new Date("2026-06-13T09:01:00.000Z") });
+  const notes = await listWikiNotes({ stateDir });
+  const html = renderWikiDashboardHtml(notes);
+  const graphHtml = renderWikiGraphHtml(notes);
+
+  assert.match(html, /Current Reading Context/);
+  assert.match(html, /History Stack/);
+  assert.match(html, /href="\/graph"/);
+  assert.match(html, /note-card/);
+  assert.doesNotMatch(html, /graph-edge/);
+  assert.match(graphHtml, /Graph View/);
+  assert.match(graphHtml, /<svg viewBox="0 0 520 300"/);
+  assert.match(graphHtml, /graph-edge/);
+  assert.match(graphHtml, /nodeGlow/);
+  assert.match(graphHtml, /Readable Connections/);
+});
+
+test("dashboard server serves the graph view route", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-wiki-graph-route-"));
+  const state = createRunState({
+    objective: "Graph route objective",
+    now: new Date("2026-06-13T08:00:00.000Z")
+  });
+  const port = await getFreePort();
+  const served = await serveWikiDashboard({ stateDir, port });
+  await writeWikiForRunState(state, { stateDir, now: new Date("2026-06-13T08:01:00.000Z") });
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/graph`);
+    const html = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.match(html, /Graph View/);
+    assert.match(html, /Back to notes/);
+    assert.match(html, /<svg viewBox="0 0 520 300"/);
+  } finally {
+    if (served.server) {
+      served.server.close();
+      await once(served.server, "close");
+    }
+  }
 });
 
 test("dashboard run policy respects TTY and explicit flags", () => {

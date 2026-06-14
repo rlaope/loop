@@ -42,6 +42,27 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;");
 }
 
+/** @param {string} value */
+function stripMarkdown(value) {
+  return value
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[`*_>#-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * @param {string} value
+ * @param {number} maxLength
+ */
+function truncateText(value, maxLength) {
+  const trimmed = value.trim();
+  if (trimmed.length <= maxLength) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, Math.max(0, maxLength - 1)).trimEnd()}...`;
+}
+
 /**
  * @param {string} root
  * @param {string} child
@@ -231,6 +252,40 @@ function statusSummary(state) {
 /**
  * @param {import("./run-state.js").LoopRunState} state
  */
+function narrativeSummary(state) {
+  return [
+    `This note captures the Loop run for "${state.objective}".`,
+    `The run is currently ${state.status} in the ${state.phase} phase, so the most important follow-up is: ${state.nextAction}.`,
+    `Use this page as the human-readable source for what the agent was asked to do, what evidence exists, and what still needs judgment before treating the work as complete.`
+  ].join(" ");
+}
+
+/**
+ * @param {import("./run-state.js").LoopRunState} state
+ */
+function decisionEntries(state) {
+  const approvalText = state.approvals.humanApproval
+    ? `Write-capable work was approved for scope: ${state.approvals.approvalScope.join(", ") || "write"}.`
+    : "No write approval was recorded, so the run should be treated as read-only or pre-action context until later evidence says otherwise.";
+  return [
+    {
+      decision: "Use the objective as the working contract.",
+      rationale: `The loop was started with this objective: ${state.objective}`
+    },
+    {
+      decision: "Stop according to the recorded stop condition.",
+      rationale: state.stopCondition.description
+    },
+    {
+      decision: "Keep approval and safety state visible.",
+      rationale: approvalText
+    }
+  ];
+}
+
+/**
+ * @param {import("./run-state.js").LoopRunState} state
+ */
 function flagEntries(state) {
   /** @type {{ kind: string, text: string, severity: "low" | "medium" | "high" }[]} */
   const flags = [];
@@ -252,6 +307,14 @@ function flagEntries(state) {
 }
 
 /**
+ * @param {WikiLink} link
+ */
+function linkTargetId(link) {
+  const filename = link.target.split("/").pop() ?? link.target;
+  return filename.endsWith(".md") ? filename.slice(0, -3) : filename;
+}
+
+/**
  * @param {WikiIndex} index
  * @param {import("./run-state.js").LoopRunState} state
  * @param {string} id
@@ -264,7 +327,7 @@ function relatedLinks(index, state, id) {
     .map((note) => ({
       target: `../user/${note.id}.md`,
       relationship: "continues",
-      reason: `Previous Loop Wiki note for objective slug ${state.objectiveSlug}.`
+      reason: "Earlier Loop Wiki note for the same objective."
     }));
 }
 
@@ -274,7 +337,7 @@ function relatedLinks(index, state, id) {
  */
 export function renderWikiNote(state, { id, links, paths = {} }) {
   const evidence = state.verificationEvidence.length === 0
-    ? "No evidence recorded yet."
+    ? "- pending: No verification evidence has been recorded yet."
     : state.verificationEvidence.map((entry) => `- ${entry.status}: ${entry.summary}`).join("\n");
   const flags = flagEntries(state);
   const flagText = flags.length === 0
@@ -282,7 +345,11 @@ export function renderWikiNote(state, { id, links, paths = {} }) {
     : flags.map((flag) => `- ${flag.severity}: ${flag.kind} - ${flag.text}`).join("\n");
   const linkText = links.length === 0
     ? "No related notes yet."
-    : links.map((link) => `- [${link.relationship}: ${link.target}](${link.target}) - ${link.reason}`).join("\n");
+    : links.map((link) => `- [${link.relationship}: previous note ${linkTargetId(link)}](${link.target}) - ${link.reason}`).join("\n");
+  const decisions = decisionEntries(state);
+  const decisionText = decisions
+    .map((entry) => `- ${entry.decision} ${entry.rationale}`)
+    .join("\n");
   const technicalRows = [
     ["Run ID", state.id],
     ["Objective slug", state.objectiveSlug],
@@ -297,19 +364,25 @@ export function renderWikiNote(state, { id, links, paths = {} }) {
     "",
     `> Loop Wiki note: ${id}`,
     "",
+    "## Narrative Summary",
+    "",
+    narrativeSummary(state),
+    "",
     "## Purpose",
     "",
-    state.objective,
+    `The purpose of this run is to move the project toward: ${state.objective}`,
     "",
-    "## Decisions",
+    `The current stop rule is: ${state.stopCondition.description}`,
     "",
-    "No explicit decisions recorded in run state.",
+    "## Decision Log",
     "",
-    "## Rationale / Evidence",
+    decisionText,
     "",
-    evidence,
+    "## Rationale",
     "",
-    "## Change Summary",
+    `The loop records the objective, safety state, run phase, verification evidence, and graph links so a human can recover context without replaying the whole agent conversation. The latest recorded next action is: ${state.nextAction}`,
+    "",
+    "## Work / Change Summary",
     "",
     statusSummary(state),
     "",
@@ -330,6 +403,12 @@ export function renderWikiNote(state, { id, links, paths = {} }) {
     "## Related Notes",
     "",
     linkText,
+    "",
+    "## Graph Links",
+    "",
+    links.length === 0
+      ? "This note has no graph edges yet. Future runs with the same objective slug will appear here."
+      : links.map((link) => `- ${id} --${link.relationship}--> ${linkTargetId(link)}: ${link.reason}`).join("\n"),
     "",
     "## Token Usage",
     "",
@@ -354,8 +433,8 @@ function shortSummaryFromMarkdown(markdown) {
   const paragraph = markdown
     .split("\n")
     .map((line) => line.trim())
-    .find((line) => line && !line.startsWith("#") && !line.startsWith(">"));
-  return paragraph ?? "Loop Wiki note.";
+    .find((line) => line && !line.startsWith("#") && !line.startsWith(">") && !line.startsWith("|") && !line.startsWith("-"));
+  return paragraph ? truncateText(stripMarkdown(paragraph), 180) : "Loop Wiki note.";
 }
 
 /**
@@ -364,6 +443,7 @@ function shortSummaryFromMarkdown(markdown) {
  */
 function buildAiMemory(state, { id, noteRelativePath, markdown, markdownHash, generatedMarkdownHash, links, paths = {} }) {
   const flags = flagEntries(state);
+  const decisions = decisionEntries(state);
   return {
     version: 1,
     id,
@@ -379,7 +459,7 @@ function buildAiMemory(state, { id, noteRelativePath, markdown, markdownHash, ge
     summary: shortSummaryFromMarkdown(markdown),
     status: state.status,
     phase: state.phase,
-    decisions: [],
+    decisions,
     technicalSpec: {
       stack: [],
       entrypoints: [],
@@ -473,7 +553,7 @@ function upsertIndexEntry(index, entry, now) {
 function buildGraph(index, now) {
   const edges = index.notes.flatMap((note) => note.links.map((link) => ({
     source: note.id,
-    target: link.target,
+    target: linkTargetId(link),
     relationship: link.relationship,
     reason: link.reason
   })));
@@ -598,22 +678,253 @@ export function renderWikiList(notes) {
 }
 
 /**
+ * @param {string} value
+ */
+function statusClass(value) {
+  if (value === "complete") {
+    return "status-complete";
+  }
+  if (value === "failed" || value === "unsafe" || value === "blocked") {
+    return "status-risk";
+  }
+  return "status-active";
+}
+
+/**
+ * @param {WikiTokenUsage} tokens
+ */
+function tokenLabel(tokens) {
+  if (tokens.total !== null) {
+    return `${tokens.total} total`;
+  }
+  return tokens.source === "unknown" ? "unknown" : tokens.source;
+}
+
+/** @param {string} value */
+function safeLinkHref(value) {
+  const href = value.trim();
+  if (/^(https?:|\/|\.\/|\.\.\/|#)/i.test(href)) {
+    return href;
+  }
+  return "#";
+}
+
+/**
+ * @param {string} value
+ */
+function renderInlineMarkdown(value) {
+  return escapeHtml(value)
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, href) => {
+      const safeHref = safeLinkHref(String(href).replace(/&amp;/g, "&"));
+      return `<a href="${escapeHtml(safeHref)}">${label}</a>`;
+    })
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+}
+
+/**
+ * @param {string} line
+ */
+function splitTableRow(line) {
+  return line
+    .trim()
+    .replace(/^\||\|$/g, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+/**
+ * @param {string[]} lines
+ * @param {number} index
+ */
+function renderMarkdownTable(lines, index) {
+  const header = splitTableRow(lines[index]);
+  let cursor = index + 2;
+  const rows = [];
+  while (cursor < lines.length && /^\s*\|/.test(lines[cursor])) {
+    rows.push(splitTableRow(lines[cursor]));
+    cursor += 1;
+  }
+  const head = header.map((cell) => `<th>${renderInlineMarkdown(cell)}</th>`).join("");
+  const body = rows.map((row) => `<tr>${row.map((cell) => `<td>${renderInlineMarkdown(cell)}</td>`).join("")}</tr>`).join("");
+  return {
+    html: `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`,
+    nextIndex: cursor
+  };
+}
+
+/**
+ * @param {string[]} lines
+ * @param {number} index
+ */
+function renderMarkdownList(lines, index) {
+  let cursor = index;
+  const items = [];
+  while (cursor < lines.length && /^\s*-\s+/.test(lines[cursor])) {
+    items.push(lines[cursor].replace(/^\s*-\s+/, ""));
+    cursor += 1;
+  }
+  return {
+    html: `<ul>${items.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join("")}</ul>`,
+    nextIndex: cursor
+  };
+}
+
+/**
+ * @param {string} markdown
+ */
+function renderMarkdownBody(markdown) {
+  const lines = markdown.split(/\r?\n/);
+  /** @type {string[]} */
+  const html = [];
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (!trimmed) {
+      index += 1;
+      continue;
+    }
+    if (trimmed.startsWith("```")) {
+      const code = [];
+      index += 1;
+      while (index < lines.length && !lines[index].trim().startsWith("```")) {
+        code.push(lines[index]);
+        index += 1;
+      }
+      html.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);
+      index += 1;
+      continue;
+    }
+    const heading = /^(#{1,6})\s+(.+)$/.exec(trimmed);
+    if (heading) {
+      const level = Math.min(heading[1].length, 3);
+      html.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
+      index += 1;
+      continue;
+    }
+    if (trimmed.startsWith(">")) {
+      html.push(`<blockquote>${renderInlineMarkdown(trimmed.replace(/^>\s*/, ""))}</blockquote>`);
+      index += 1;
+      continue;
+    }
+    if (/^\s*-\s+/.test(line)) {
+      const list = renderMarkdownList(lines, index);
+      html.push(list.html);
+      index = list.nextIndex;
+      continue;
+    }
+    if (/^\s*\|/.test(line) && lines[index + 1] && /^\s*\|\s*-/.test(lines[index + 1])) {
+      const table = renderMarkdownTable(lines, index);
+      html.push(table.html);
+      index = table.nextIndex;
+      continue;
+    }
+    const paragraph = [trimmed];
+    index += 1;
+    while (
+      index < lines.length &&
+      lines[index].trim() &&
+      !/^(#{1,6})\s+/.test(lines[index].trim()) &&
+      !lines[index].trim().startsWith(">") &&
+      !/^\s*-\s+/.test(lines[index]) &&
+      !/^\s*\|/.test(lines[index])
+    ) {
+      paragraph.push(lines[index].trim());
+      index += 1;
+    }
+    html.push(`<p>${renderInlineMarkdown(paragraph.join(" "))}</p>`);
+  }
+  return html.join("\n");
+}
+
+/**
+ * @param {WikiIndexEntry[]} notes
+ */
+function graphEdges(notes) {
+  return notes.flatMap((note) => note.links.map((link) => ({
+    source: note.id,
+    target: linkTargetId(link),
+    relationship: link.relationship,
+    reason: link.reason
+  })));
+}
+
+/**
+ * @param {WikiIndexEntry[]} notes
+ */
+function renderGraphSvg(notes) {
+  if (notes.length === 0) {
+    return "<p>No graph nodes yet. Run Loop once to create the first note.</p>";
+  }
+  const width = 520;
+  const height = 300;
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const radius = Math.min(150, 60 + notes.length * 18);
+  const positions = new Map(notes.map((note, index) => {
+    const angle = notes.length === 1 ? -Math.PI / 2 : (Math.PI * 2 * index / notes.length) - Math.PI / 2;
+    return [note.id, {
+      x: centerX + Math.cos(angle) * radius,
+      y: centerY + Math.sin(angle) * radius
+    }];
+  }));
+  const edges = graphEdges(notes);
+  const edgeHtml = edges.map((edge) => {
+    const source = positions.get(edge.source);
+    const target = positions.get(edge.target);
+    if (!source || !target) {
+      return "";
+    }
+    return `<line x1="${source.x.toFixed(1)}" y1="${source.y.toFixed(1)}" x2="${target.x.toFixed(1)}" y2="${target.y.toFixed(1)}" class="graph-edge"><title>${escapeHtml(edge.relationship)}: ${escapeHtml(edge.reason)}</title></line>`;
+  }).join("");
+  const nodeHtml = notes.map((note) => {
+    const point = positions.get(note.id);
+    if (!point) {
+      return "";
+    }
+    const label = truncateText(note.title, 28);
+    return `<a href="/notes/${encodeURIComponent(note.id)}" class="graph-node-link"><g class="graph-node ${statusClass(note.status)}">
+      <circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="18"><title>${escapeHtml(note.title)}</title></circle>
+      <text x="${point.x.toFixed(1)}" y="${(point.y + 34).toFixed(1)}" text-anchor="middle">${escapeHtml(label)}</text>
+    </g></a>`;
+  }).join("");
+  return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Loop Wiki graph view">
+    <defs>
+      <filter id="nodeGlow" x="-80%" y="-80%" width="260%" height="260%">
+        <feGaussianBlur stdDeviation="3" result="blur"></feGaussianBlur>
+        <feMerge>
+          <feMergeNode in="blur"></feMergeNode>
+          <feMergeNode in="SourceGraphic"></feMergeNode>
+        </feMerge>
+      </filter>
+    </defs>
+    ${edgeHtml}${nodeHtml}
+  </svg>`;
+}
+
+/**
  * @param {WikiIndexEntry[]} notes
  */
 export function renderWikiDashboardHtml(notes) {
+  const recent = notes[0];
   const cards = notes.length === 0
-    ? "<p>No Loop Wiki notes found.</p>"
+    ? "<p>No Loop Wiki notes found. Run <code>loop \"your objective\"</code> to create the first second-brain note.</p>"
     : notes.map((note) => `
-      <article class="card">
-        <h2>${escapeHtml(note.title)}</h2>
+      <article class="note-card">
+        <div class="note-card-header">
+          <span class="status ${statusClass(note.status)}">${escapeHtml(note.status)}</span>
+          <span>${escapeHtml(note.phase)}</span>
+        </div>
+        <h3>${escapeHtml(note.title)}</h3>
         <p>${escapeHtml(note.summary)}</p>
-        <dl>
-          <dt>Status</dt><dd>${escapeHtml(note.status)}</dd>
-          <dt>Tokens</dt><dd>${note.tokens.total === null ? "unknown" : String(note.tokens.total)}</dd>
+        <dl class="meta-grid">
+          <dt>Updated</dt><dd>${escapeHtml(note.updatedAt)}</dd>
+          <dt>Tokens</dt><dd>${escapeHtml(tokenLabel(note.tokens))}</dd>
+          <dt>Context</dt><dd>${note.links.length === 0 ? "No related notes yet" : `${note.links.length} related note${note.links.length === 1 ? "" : "s"}`}</dd>
         </dl>
-        <a href="/notes/${encodeURIComponent(note.id)}">Read note</a>
+        <a class="button secondary" href="/notes/${encodeURIComponent(note.id)}">Read note</a>
       </article>`).join("\n");
-  const graph = notes.flatMap((note) => note.links.map((link) => `${note.id} -> ${link.target}`));
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -621,31 +932,134 @@ export function renderWikiDashboardHtml(notes) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Loop Wiki</title>
   <style>
-    body { margin: 0; font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #181818; background: #f6f7f2; }
-    header { padding: 24px 32px 12px; border-bottom: 1px solid #d9dccf; background: #ffffff; }
-    main { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 24px; padding: 24px 32px; }
-    h1 { margin: 0; font-size: 28px; }
-    h2 { margin: 0 0 8px; font-size: 18px; }
-    .stack { display: grid; gap: 12px; }
-    .card { border: 1px solid #d9dccf; border-radius: 8px; padding: 16px; background: #ffffff; }
-    .graph { border-left: 1px solid #d9dccf; padding-left: 20px; }
-    dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; }
-    dt { font-weight: 700; }
-    a { color: #174ea6; }
-    pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-    @media (max-width: 760px) { main { grid-template-columns: 1fr; padding: 16px; } .graph { border-left: 0; padding-left: 0; } }
+    :root { color-scheme: light; --ink: #16181d; --muted: #596070; --line: #d9dee8; --panel: #ffffff; --page: #f5f7fa; --blue: #1f5fbf; --green: #1f7a4d; --red: #b42318; --amber: #9a6700; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); background: var(--page); }
+    header { padding: 24px 32px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+    main { padding: 20px 32px 36px; }
+    h1 { margin: 0; font-size: 28px; line-height: 1.1; }
+    h2 { margin: 0 0 12px; font-size: 18px; }
+    h3 { margin: 8px 0; font-size: 17px; line-height: 1.25; }
+    p { margin: 0; color: var(--muted); }
+    a { color: var(--blue); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+    .subtitle { margin-top: 8px; max-width: 760px; }
+    .header-row { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    .dashboard-grid { display: grid; gap: 16px; }
+    .history-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+    .panel, .note-card { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+    .panel { padding: 16px; }
+    .note-card { padding: 14px; display: grid; gap: 8px; }
+    .note-card-header, .summary-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--muted); font-size: 13px; }
+    .status { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); font-weight: 700; }
+    .status-complete { color: var(--green); background: #eef8f1; border-color: #b7dfc2; }
+    .status-risk { color: var(--red); background: #fff0ee; border-color: #f5c3bd; }
+    .status-active { color: var(--amber); background: #fff7df; border-color: #ead189; }
+    .meta-grid { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 4px 10px; margin: 12px 0 0; font-size: 13px; }
+    .meta-grid dt { color: var(--muted); font-weight: 700; }
+    .meta-grid dd { margin: 0; overflow-wrap: anywhere; }
+    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 7px 12px; border-radius: 7px; border: 1px solid var(--blue); background: var(--blue); color: #ffffff; font-weight: 700; text-decoration: none; }
+    .button.secondary { justify-self: start; border-color: var(--line); background: #ffffff; color: var(--blue); }
+    .empty { color: var(--muted); }
+    @media (max-width: 760px) { header { padding: 20px 16px 14px; } main { padding: 16px; } .header-row { display: grid; } .actions { justify-content: flex-start; } }
   </style>
 </head>
 <body>
   <header>
-    <h1>Loop Wiki</h1>
-    <p>Local second brain for delegated agent work.</p>
+    <div class="header-row">
+      <div>
+        <h1>Loop Wiki</h1>
+        <p class="subtitle">Local second brain for delegated agent work. Read the latest note and scan run history without opening raw files.</p>
+      </div>
+      <nav class="actions" aria-label="Wiki views">
+        <a class="button" href="/graph">Graph View</a>
+      </nav>
+    </div>
   </header>
   <main>
-    <section class="stack">${cards}</section>
-    <aside class="graph">
-      <h2>Related Notes</h2>
-      <pre>${escapeHtml(graph.length === 0 ? "No graph links yet." : graph.join("\n"))}</pre>
+    <section class="dashboard-grid">
+      <section class="panel">
+        <h2>Current Reading Context</h2>
+        ${recent ? `
+          <div class="summary-row">
+            <span class="status ${statusClass(recent.status)}">${escapeHtml(recent.status)}</span>
+            <span>${escapeHtml(recent.phase)}</span>
+            <span>${escapeHtml(recent.updatedAt)}</span>
+          </div>
+          <h3>${escapeHtml(recent.title)}</h3>
+          <p>${escapeHtml(recent.summary)}</p>
+          <p style="margin-top: 12px;"><a class="button secondary" href="/notes/${encodeURIComponent(recent.id)}">Read current note</a></p>
+        ` : "<p class=\"empty\">No notes yet.</p>"}
+      </section>
+      <section>
+        <h2>History Stack</h2>
+        <div class="history-grid">${cards}</div>
+      </section>
+    </section>
+  </main>
+</body>
+</html>`;
+}
+
+/**
+ * @param {WikiIndexEntry[]} notes
+ */
+export function renderWikiGraphHtml(notes) {
+  const edges = graphEdges(notes);
+  const noteById = new Map(notes.map((note) => [note.id, note]));
+  const edgeSummary = edges.length === 0
+    ? "<p class=\"empty\">No graph links yet. Repeated objectives will connect automatically.</p>"
+    : `<ul>${edges.slice(0, 8).map((edge) => {
+        const source = noteById.get(edge.source);
+        const target = noteById.get(edge.target);
+        return `<li><strong>${escapeHtml(source ? truncateText(source.title, 42) : edge.source)}</strong> continues <strong>${escapeHtml(target ? truncateText(target.title, 42) : edge.target)}</strong></li>`;
+      }).join("")}</ul>`;
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Loop Wiki Graph</title>
+  <style>
+    :root { color-scheme: light; --ink: #16181d; --muted: #596070; --line: #d9dee8; --panel: #ffffff; --page: #f5f7fa; --blue: #1f5fbf; --green: #1f7a4d; --red: #b42318; --amber: #9a6700; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); background: var(--page); }
+    header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; padding: 22px 28px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+    h1 { margin: 0; font-size: 26px; line-height: 1.1; }
+    h2 { margin: 0 0 12px; font-size: 16px; }
+    p { margin: 6px 0 0; color: var(--muted); }
+    a { color: var(--blue); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 7px 12px; border-radius: 7px; border: 1px solid var(--line); background: #ffffff; color: var(--blue); font-weight: 700; text-decoration: none; }
+    main { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; padding: 16px 28px 28px; }
+    .graph-stage, .side-panel { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+    .graph-stage { min-height: 68vh; overflow: hidden; background: #fbfcfe; }
+    .side-panel { padding: 16px; align-self: start; }
+    svg { display: block; width: 100%; min-height: 68vh; }
+    .graph-edge { stroke: #9babc2; stroke-width: 1.3; }
+    .graph-node circle { fill: #ffffff; stroke: var(--blue); stroke-width: 2.4; filter: url(#nodeGlow); }
+    .graph-node.status-complete circle { stroke: var(--green); }
+    .graph-node.status-risk circle { stroke: var(--red); }
+    .graph-node.status-active circle { stroke: var(--amber); }
+    .graph-node text { fill: var(--ink); font-size: 11px; pointer-events: none; }
+    .empty, li { color: var(--muted); }
+    ul { margin: 0; padding-left: 18px; }
+    li { margin: 7px 0; }
+    @media (max-width: 880px) { header { display: grid; padding: 18px 16px 12px; } main { grid-template-columns: 1fr; padding: 16px; } .graph-stage, svg { min-height: 460px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Graph View</h1>
+      <p>Notes are dots. Lines show repeated or continued Loop context. Click a dot to open the note.</p>
+    </div>
+    <a class="button" href="/">Back to notes</a>
+  </header>
+  <main>
+    <section class="graph-stage">${renderGraphSvg(notes)}</section>
+    <aside class="side-panel">
+      <h2>Readable Connections</h2>
+      ${edgeSummary}
     </aside>
   </main>
 </body>
@@ -663,14 +1077,29 @@ export function renderMarkdownHtml(markdown) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Loop Wiki Note</title>
   <style>
-    body { margin: 0; font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #181818; background: #fbfbf8; }
-    main { max-width: 920px; margin: 0 auto; padding: 28px 20px 60px; }
-    pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-    a { color: #174ea6; }
+    :root { --ink: #17191f; --muted: #596070; --line: #d9dee8; --panel: #ffffff; --page: #f6f7fa; --blue: #1f5fbf; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 16px/1.65 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); background: var(--page); }
+    main { max-width: 940px; margin: 0 auto; padding: 28px 20px 64px; }
+    article { border: 1px solid var(--line); border-radius: 8px; padding: 28px; background: var(--panel); }
+    h1 { margin: 0 0 12px; font-size: 32px; line-height: 1.15; }
+    h2 { margin: 30px 0 10px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 21px; }
+    h3 { margin: 20px 0 8px; font-size: 18px; }
+    p { margin: 10px 0; }
+    blockquote { margin: 14px 0; padding: 10px 14px; border-left: 4px solid var(--blue); background: #eef4ff; color: #26364f; }
+    ul { padding-left: 22px; }
+    li { margin: 5px 0; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+    th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+    th { background: #f0f3f8; }
+    code { padding: 1px 5px; border-radius: 5px; background: #eef1f6; }
+    pre { padding: 14px; border-radius: 8px; overflow-x: auto; background: #111827; color: #f8fafc; }
+    a { color: var(--blue); text-underline-offset: 3px; }
+    @media (max-width: 760px) { main { padding: 14px; } article { padding: 18px; } h1 { font-size: 26px; } }
   </style>
 </head>
 <body>
-  <main><pre>${escapeHtml(markdown)}</pre></main>
+  <main><article>${renderMarkdownBody(markdown)}</article></main>
 </body>
 </html>`;
 }

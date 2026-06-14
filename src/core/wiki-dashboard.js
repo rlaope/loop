@@ -5,6 +5,7 @@ import { once } from "node:events";
 import {
   listWikiNotes,
   readWikiNote,
+  renderWikiGraphHtml,
   renderMarkdownHtml,
   renderWikiDashboardHtml
 } from "./wiki-store.js";
@@ -135,6 +136,12 @@ export function createWikiServer({
         const note = await readWikiNote(id, { stateDir });
         response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         response.end(renderMarkdownHtml(note.markdown));
+        return;
+      }
+      if (url.pathname === "/graph") {
+        const notes = await listWikiNotes({ stateDir });
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        response.end(renderWikiGraphHtml(notes));
         return;
       }
       const notes = await listWikiNotes({ stateDir });
