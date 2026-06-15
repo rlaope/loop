@@ -227,6 +227,7 @@ Install or load this repository as a Codex plugin source, then invoke:
 
 ```text
 $loop <objective>
+$Loop <objective>
 ```
 
 The skill tells the agent to record durable state, check repository boundaries,
