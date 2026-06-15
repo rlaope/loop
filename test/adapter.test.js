@@ -301,6 +301,7 @@ test("manifest capability matches explicit CLI surfaces", async () => {
   assert.match(help, /loop run --agent claudecode/);
   assert.match(help, /loop doctor/);
   assert.match(help, /loop demo/);
+  assert.match(help, /--no-notify/);
   assert.match(help, /asks clarifying questions/);
 });
 
@@ -455,6 +456,7 @@ test("CLI codex agent mode runs through policy gate and records state", async ()
   const repo = await mkdtemp(join(tmpdir(), "loop-agent-repo-"));
   const fakeBin = await mkdtemp(join(tmpdir(), "loop-fake-bin-"));
   const stateDir = join(repo, ".loop");
+  const notificationLog = join(repo, "notifications.jsonl");
   const fakeCodex = join(fakeBin, "codex");
   await writeFile(fakeCodex, [
     "#!/usr/bin/env node",
@@ -481,7 +483,8 @@ test("CLI codex agent mode runs through policy gate and records state", async ()
       encoding: "utf8",
       env: {
         ...process.env,
-        PATH: `${fakeBin}:${process.env.PATH ?? ""}`
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        LOOP_NOTIFICATION_LOG: notificationLog
       }
     }
   );
@@ -489,6 +492,10 @@ test("CLI codex agent mode runs through policy gate and records state", async ()
   const state = JSON.parse(await readFile(output.paths.jsonPath, "utf8"));
   const log = await readFile(join(stateDir, "runs", `${state.id}.log`), "utf8");
   const codexArgs = JSON.parse(await readFile(join(repo, "codex-args.json"), "utf8"));
+  const notifications = (await readFile(notificationLog, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
 
   assert.equal(result.status, 0);
   assert.equal(output.agent, "codex");
@@ -499,6 +506,9 @@ test("CLI codex agent mode runs through policy gate and records state", async ()
   assert.match(result.stderr, /Loop agent session:/);
   assert.match(result.stderr, /loop logs --follow/);
   assert.match(log, /starting codex/);
+  assert.deepEqual(notifications.map((event) => event.title), ["Loop started", "Loop needs review"]);
+  assert.equal(notifications[0].runId, state.id);
+  assert.equal(notifications[1].runId, state.id);
   assert.equal(state.approvals.humanApproval, true);
   assert.equal(state.verificationEvidence.at(-1).status, "passed");
   assert.deepEqual(codexArgs.slice(0, 2), ["exec", "--sandbox"]);
@@ -566,6 +576,47 @@ test("CLI follow-up run records parent lineage from prepared commands", async ()
   assert.equal(state.lineage.rootRunId, parent.stateId);
   assert.equal(state.lineage.createdFrom, "dashboard");
   assert.equal(state.lineage.relationship, "continues");
+});
+
+test("CLI --no-notify suppresses lifecycle notification dispatch", async () => {
+  const repo = await mkdtemp(join(tmpdir(), "loop-agent-no-notify-repo-"));
+  const fakeBin = await mkdtemp(join(tmpdir(), "loop-fake-bin-"));
+  const stateDir = join(repo, ".loop");
+  const notificationLog = join(repo, "notifications.jsonl");
+  const fakeCodex = join(fakeBin, "codex");
+  await writeFile(fakeCodex, [
+    "#!/usr/bin/env node",
+    "console.log('agent done');"
+  ].join("\n"));
+  await chmod(fakeCodex, 0o755);
+  git(["init", "-b", "main"], repo);
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      resolve("bin/loop.js"),
+      "run",
+      "--agent",
+      "codex",
+      "--no-interview",
+      "--no-notify",
+      "--state-dir",
+      stateDir,
+      "Build a darkwear luxury website MVP"
+    ],
+    {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        LOOP_NOTIFICATION_LOG: notificationLog
+      }
+    }
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(notificationLog), false);
 });
 
 test("CLI run opens an already-running dashboard URL", async () => {
@@ -858,6 +909,7 @@ test("CLI prompt defaults to run mode when an agent is explicit", async () => {
 test("CLI run policy failure keeps exit 3 and skips wiki", async () => {
   const repo = await mkdtemp(join(tmpdir(), "loop-policy-fail-repo-"));
   const stateDir = join(repo, ".loop");
+  const notificationLog = join(repo, "notifications.jsonl");
   git(["init", "-b", "main"], repo);
 
   const result = spawnSync(
@@ -874,11 +926,23 @@ test("CLI run policy failure keeps exit 3 and skips wiki", async () => {
       join(repo, "elsewhere"),
       "Build a darkwear luxury website MVP"
     ],
-    { cwd: repo, encoding: "utf8" }
+    {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        LOOP_NOTIFICATION_LOG: notificationLog
+      }
+    }
   );
+  const notifications = (await readFile(notificationLog, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
 
   assert.equal(result.status, 3);
   assert.match(result.stderr, /Policy gate failed:/);
+  assert.equal(notifications[0].title, "Loop needs attention");
   await assert.rejects(() => readdir(join(stateDir, "wiki")), /ENOENT/);
 });
 
