@@ -34,7 +34,8 @@ test("no-arg dispatch opens TUI only for interactive terminals", () => {
 });
 
 test("TUI home render shows runs, wiki, graph, and commands", () => {
-  const html = renderTuiHome({
+  /** @type {Parameters<typeof renderTuiHome>[0]} */
+  const snapshot = {
     stateDir: ".loop",
     agent: "codex",
     selectedRunId: "run-1",
@@ -100,8 +101,10 @@ test("TUI home render shows runs, wiki, graph, and commands", () => {
       }],
       edges: []
     }
-  });
+  };
+  const html = renderTuiHome(snapshot);
 
+  assert.doesNotMatch(html, /\.----->----\./);
   assert.match(html, /Loop Agent Console/);
   assert.match(html, /Build a darkwear exhibit/);
   assert.match(html, /Wiki: 1 notes/);
@@ -130,11 +133,68 @@ test("TUI one-shot mode renders local state without waiting for input", async ()
     input,
     output,
     once: true,
-    clearScreen: false
+    clearScreen: false,
+    env: { FORCE_COLOR: "1" }
   });
 
+  assert.match(text, /\x1b\[38;5;167m/);
+  assert.match(text, /\.----->----\./);
   assert.match(text, /Loop Agent Console/);
   assert.match(text, /Render TUI objective/);
+});
+
+test("TUI init logo honors no-color terminal preferences", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-tui-no-color-"));
+  const input = /** @type {PassThrough & { isTTY?: boolean }} */ (new PassThrough());
+  const output = /** @type {PassThrough & { isTTY?: boolean }} */ (new PassThrough());
+  input.isTTY = true;
+  output.isTTY = true;
+  let text = "";
+  output.on("data", (chunk) => {
+    text += String(chunk);
+  });
+
+  await runLoopTui({
+    stateDir,
+    input,
+    output,
+    once: true,
+    clearScreen: false,
+    env: { NO_COLOR: "1" }
+  });
+
+  assert.match(text, /\.----->----\./);
+  assert.doesNotMatch(text, /\x1b\[/);
+});
+
+test("TUI init logo appears only on the startup render", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-tui-logo-once-"));
+  const input = /** @type {PassThrough & { isTTY?: boolean }} */ (new PassThrough());
+  const output = /** @type {PassThrough & { isTTY?: boolean }} */ (new PassThrough());
+  input.isTTY = true;
+  output.isTTY = true;
+  let text = "";
+  let promptCount = 0;
+  output.on("data", (chunk) => {
+    const value = String(chunk);
+    text += value;
+    if (!value.includes("loop> ")) {
+      return;
+    }
+    promptCount += 1;
+    input.write(promptCount === 1 ? "refresh\n" : "q\n");
+  });
+
+  await runLoopTui({
+    stateDir,
+    input,
+    output,
+    clearScreen: false,
+    env: { FORCE_COLOR: "1" }
+  });
+
+  assert.equal((text.match(/\.----->----\./g) ?? []).length, 1);
+  assert.equal((text.match(/Loop Agent Console/g) ?? []).length, 2);
 });
 
 test("CLI no-arg non-TTY prints TUI guidance", () => {

@@ -21,6 +21,23 @@ import {
   loopRunCommand
 } from "./terminal-launcher.js";
 
+const RED = "\x1b[38;5;167m";
+const DIM_RED = "\x1b[38;5;88m";
+const RESET = "\x1b[0m";
+const LOOP_LOGO_LINES = [
+  " _      ___   ___  ____ ",
+  "| |    / _ \\ / _ \\|  _ \\",
+  "| |   | | | | | | | |_) |",
+  "| |___| |_| | |_| |  __/",
+  "|_____|\\___/ \\___/|_|",
+  "        .----->----.",
+  "     .-'           '-.",
+  "   .'   plan   act    '.",
+  "   \\    verify stop    /",
+  "     '-.           .-'",
+  "        '----<----'"
+];
+
 /**
  * @param {{ argCount: number, stdinTTY: boolean, stdoutTTY: boolean }} input
  */
@@ -37,6 +54,32 @@ export function noArgTuiDispatch({ argCount, stdinTTY, stdoutTTY }) {
  */
 function truncate(value, maxLength) {
   return value.length <= maxLength ? value : `${value.slice(0, maxLength - 3)}...`;
+}
+
+/**
+ * @param {{ color?: boolean }} [options]
+ */
+function renderTuiLogo({ color = false } = {}) {
+  if (!color) {
+    return LOOP_LOGO_LINES.join("\n");
+  }
+  return LOOP_LOGO_LINES.map((line, index) => {
+    const tone = index < 5 ? RED : DIM_RED;
+    return `${tone}${line}${RESET}`;
+  }).join("\n");
+}
+
+/**
+ * @param {{ isTTY?: boolean, env?: NodeJS.ProcessEnv }} input
+ */
+function shouldUseTuiColor({ isTTY = false, env = process.env }) {
+  if (!isTTY) {
+    return false;
+  }
+  if (env.NO_COLOR !== undefined || env.FORCE_COLOR === "0" || env.TERM === "dumb") {
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -115,6 +158,7 @@ function writeStatus(output, message) {
  *   output?: NodeJS.WritableStream & { isTTY?: boolean },
  *   once?: boolean,
  *   clearScreen?: boolean,
+ *   env?: NodeJS.ProcessEnv,
  *   openTargetImpl?: typeof openTarget,
  *   launchTerminalCommandImpl?: typeof launchTerminalCommand
  * }} [options]
@@ -125,6 +169,7 @@ export async function runLoopTui({
   output = process.stdout,
   once = false,
   clearScreen = true,
+  env = process.env,
   openTargetImpl = openTarget,
   launchTerminalCommandImpl = launchTerminalCommand
 } = {}) {
@@ -133,6 +178,7 @@ export async function runLoopTui({
   }
   let selectedRunId = /** @type {string | null} */ (null);
   let agent = /** @type {"codex" | "claudecode"} */ ("codex");
+  let showLogo = true;
   const rl = createInterface({ input, output });
   try {
     while (true) {
@@ -141,7 +187,13 @@ export async function runLoopTui({
       if (clearScreen) {
         output.write("\x1Bc");
       }
+      if (showLogo) {
+        output.write(`${renderTuiLogo({
+          color: shouldUseTuiColor({ isTTY: output.isTTY, env })
+        })}\n\n`);
+      }
       output.write(renderTuiHome(snapshot));
+      showLogo = false;
       if (once) {
         return;
       }
