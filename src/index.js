@@ -24,6 +24,12 @@ export { demoWorkflows, renderDemoGuide } from "./core/demo.js";
 export { MIN_NODE_MAJOR, doctorExitCode, renderDoctorReport, runDoctorChecks } from "./core/doctor.js";
 export { hasActiveApproval, requireWriteApproval } from "./core/approval.js";
 export { checkIsolationDecision, checkRepoBoundary } from "./core/preflight.js";
+export {
+  loopNotificationPayload,
+  notificationCommand,
+  sendLoopNotification,
+  shouldSendLoopNotification
+} from "./core/notifications.js";
 export { evaluatePolicyGate } from "./core/policy.js";
 export { appendEvidence, createRunState, slugifyObjective, transitionRunState } from "./core/run-state.js";
 export { assertValidRunState, validateRunState } from "./core/schema.js";
@@ -137,6 +143,7 @@ export function printHelp(stream) {
   stream.write(`  --expected-remote  Expected origin URL for write-capable runs.\n`);
   stream.write(`  --allow-no-remote  Allow write-capable runs in a local repo with no origin.\n`);
   stream.write(`  --no-interview   Skip ambiguity interview for automation or tests.\n`);
+  stream.write(`  --no-notify      Disable desktop notifications for this run.\n`);
   stream.write(`\n`);
   stream.write(`No-argument loop opens the local Agent Console TUI in an interactive terminal.\n`);
   stream.write(`Doctor mode checks local readiness without writing state or launching agents.\n`);

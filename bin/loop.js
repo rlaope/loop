@@ -21,7 +21,10 @@ import {
   evaluatePolicyGate,
   listRunStates,
   listWikiNotes,
+  loopNotificationPayload,
   noArgTuiDispatch,
+  sendLoopNotification,
+  shouldSendLoopNotification,
   openTarget,
   printHelp,
   readRunLog,
@@ -76,6 +79,7 @@ const booleanFlags = new Set([
   "--help",
   "--follow",
   "--no-interview",
+  "--no-notify",
   "--read-only",
   "--stdin",
   "--version",
@@ -755,6 +759,37 @@ async function writeWikiOrExit(state, paths, { stateDir, context }) {
 }
 
 /**
+ * @param {"policy-blocked" | "run-started" | "agent-start-failed" | "run-finished"} event
+ * @param {{
+ *   agent?: string,
+ *   objective: string,
+ *   runId?: string,
+ *   reason?: string,
+ *   dashboardUrl?: string,
+ *   exitCode?: number
+ * }} input
+ * @param {boolean} enabled
+ */
+function notifyLoopEvent(event, input, enabled) {
+  if (!input.runId || !shouldSendLoopNotification({
+    enabled,
+    env: process.env,
+    stdoutTTY: Boolean(process.stdout.isTTY),
+    stderrTTY: Boolean(process.stderr.isTTY)
+  })) {
+    return;
+  }
+  try {
+    sendLoopNotification(loopNotificationPayload(event, {
+      ...input,
+      runId: input.runId
+    }));
+  } catch {
+    // Notifications are intentionally best-effort; the loop state is canonical.
+  }
+}
+
+/**
  * @param {{ stateDir: string, explicitFlag: boolean, host: string, port: number }} options
  */
 async function maybeStartDashboardForRun({ stateDir, explicitFlag, host, port }) {
@@ -823,6 +858,7 @@ async function maybeStartDashboardForRun({ stateDir, explicitFlag, host, port })
  * @param {number} options.dashboardPort
  * @param {string | undefined} options.parentRunId
  * @param {"tui" | "dashboard" | "cli" | undefined} options.lineageSource
+ * @param {boolean} options.notificationsEnabled
  */
 async function runAgent({
   agent,
@@ -838,7 +874,8 @@ async function runAgent({
   dashboardHost: host,
   dashboardPort: port,
   parentRunId,
-  lineageSource
+  lineageSource,
+  notificationsEnabled
 }) {
   try {
     ensureProjectBoundary({ writeMode, expectedRoot });
@@ -889,6 +926,11 @@ async function runAgent({
       nextAction: gate.reason
     });
     await writeRunState(blocked, { stateDir });
+    notifyLoopEvent("policy-blocked", {
+      reason: gate.reason,
+      runId: state.id,
+      objective
+    }, notificationsEnabled);
     process.stderr.write(`Policy gate failed: ${gate.reason}\n`);
     process.exit(3);
   }
@@ -903,12 +945,19 @@ async function runAgent({
 
   const prompt = buildAgentPrompt(objective, { writeMode });
   const command = agentCommand(agent, prompt, writeMode);
+  const url = dashboardUrl({ host, port });
   const result = await runAgentProcess(command, {
     agent,
     state,
     stateDir,
     onStarted: async (runningState, runningPaths) => {
       await writeWikiOrExit(runningState, runningPaths, { stateDir, context: "running agent session" });
+      notifyLoopEvent("run-started", {
+        agent,
+        dashboardUrl: url,
+        runId: runningState.id,
+        objective
+      }, notificationsEnabled);
       process.stderr.write(`Loop agent session: ${runningState.id}\n`);
       process.stderr.write(`Loop agent log: ${runLogPath({ stateDir, id: runningState.id })}\n`);
       process.stderr.write("Inspect from another terminal: loop status | loop runs | loop logs --follow\n");
@@ -925,6 +974,12 @@ async function runAgent({
     });
     const failedPaths = await writeRunState(failed, { stateDir });
     await writeWikiOrExit(failed, failedPaths, { stateDir, context: "agent start failure" });
+    notifyLoopEvent("agent-start-failed", {
+      agent,
+      reason: result.error.message,
+      runId: failed.id,
+      objective
+    }, notificationsEnabled);
     process.stderr.write(`${agent} agent failed to start: ${result.error.message}\n`);
     process.exit(5);
   }
@@ -950,6 +1005,12 @@ async function runAgent({
       });
   const finalPaths = await writeRunState(finalState, { stateDir });
   const wikiPaths = await writeWikiOrExit(finalState, finalPaths, { stateDir, context: "final run state" });
+  notifyLoopEvent("run-finished", {
+    agent,
+    exitCode,
+    runId: finalState.id,
+    objective
+  }, notificationsEnabled);
 
   process.stdout.write(`${JSON.stringify({
     ok: exitCode === 0,
@@ -1169,7 +1230,8 @@ if (isRunMode) {
     dashboardHost: host,
     dashboardPort: port,
     parentRunId,
-    lineageSource
+    lineageSource,
+    notificationsEnabled: !has("--no-notify")
   });
 }
 

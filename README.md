@@ -58,6 +58,8 @@ Loop is built around six working components:
 - A dry-run CLI path that writes state without changing source files.
 - A `loop run` command that can hand an objective to Codex or Claude Code after
   agent selection and optional goal clarification.
+- Best-effort desktop notifications on macOS, Windows, and Linux when a run
+  starts, needs human attention, or finishes and needs review.
 - A no-argument `loop` Agent Console for inspecting runs, wiki notes, log
   tails, agent choice, follow-up intent, and Codex resume actions from a TUI.
 - `loop wiki` commands for listing, reading, opening, serving, deleting, and
@@ -135,6 +137,11 @@ When a Loop Wiki dashboard is already running, `loop "prompt"` and `loop run`
 open it automatically. If it is not running in an interactive terminal, Loop
 asks whether to start it; choosing Yes starts the localhost dashboard and opens
 it in your browser.
+
+Interactive CLI runs also send best-effort system notifications when the agent
+starts, when Loop needs human attention, and when the agent finishes and needs
+review. Disable them with `--no-notify` or `LOOP_DISABLE_NOTIFICATIONS=1`; use
+`LOOP_FORCE_NOTIFICATIONS=1` for non-interactive shells.
 
 While an agent is running, Loop writes a live session record and log under
 `.loop/runs`. You can inspect the run from another terminal:
