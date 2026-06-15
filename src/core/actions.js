@@ -12,6 +12,7 @@ import {
   deleteWikiNote,
   listWikiNotes,
   readWikiNote,
+  writeWikiForRunState,
   writeWikiSupportingNote
 } from "./wiki-store.js";
 
@@ -273,9 +274,19 @@ export async function deleteRunAction({ id, stateDir = DEFAULT_STATE_DIR, confir
   if (confirmationError) {
     return confirmationError;
   }
+  const notes = await listWikiNotes({ stateDir });
+  const runNoteIds = notes
+    .filter((note) => note.kind === "run" && note.runId === id)
+    .map((note) => note.id);
+  const result = await deleteRunState(id, { stateDir });
+  const wikiResults = [];
+  for (const noteId of runNoteIds) {
+    wikiResults.push(await deleteWikiNote(noteId, { stateDir }));
+  }
   return {
     ok: true,
-    result: await deleteRunState(id, { stateDir })
+    result,
+    wikiResults
   };
 }
 
@@ -309,7 +320,8 @@ export async function markVerificationAction({
     nextAction: "review verification evidence and decide whether the run is complete"
   };
   const paths = await writeRunState(next, { stateDir });
-  return { ok: true, state: next, paths };
+  const wikiPaths = await writeWikiForRunState(next, { stateDir, paths });
+  return { ok: true, state: next, paths, wikiPaths };
 }
 
 /**
@@ -342,7 +354,8 @@ export async function markCompleteAction({
     nextAction: "complete"
   });
   const paths = await writeRunState(completed, { stateDir });
-  return { ok: true, state: completed, paths };
+  const wikiPaths = await writeWikiForRunState(completed, { stateDir, paths });
+  return { ok: true, state: completed, paths, wikiPaths };
 }
 
 /**

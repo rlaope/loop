@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtemp } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -195,6 +196,55 @@ test("TUI init logo appears only on the startup render", async () => {
 
   assert.equal((text.match(/\.----->----\./g) ?? []).length, 1);
   assert.equal((text.match(/Loop Agent Console/g) ?? []).length, 2);
+});
+
+test("TUI dashboard command starts and opens the local dashboard", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-tui-dashboard-"));
+  const input = /** @type {PassThrough & { isTTY?: boolean }} */ (new PassThrough());
+  const output = /** @type {PassThrough & { isTTY?: boolean }} */ (new PassThrough());
+  input.isTTY = true;
+  output.isTTY = true;
+  let promptCount = 0;
+  let serveCalls = 0;
+  let opened = "";
+  let closed = false;
+  const server = createServer();
+  server.on("close", () => {
+    closed = true;
+  });
+  await new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve(undefined));
+  });
+  output.on("data", (chunk) => {
+    if (!String(chunk).includes("loop> ")) {
+      return;
+    }
+    promptCount += 1;
+    input.write(promptCount === 1 ? "dashboard\n" : "q\n");
+  });
+
+  await runLoopTui({
+    stateDir,
+    input,
+    output,
+    clearScreen: false,
+    serveWikiDashboardImpl: async () => {
+      serveCalls += 1;
+      return {
+        status: "started",
+        url: "http://127.0.0.1:3846",
+        server
+      };
+    },
+    openTargetImpl: (target) => {
+      opened = target;
+      return { opened: true, recorded: false, target };
+    }
+  });
+
+  assert.equal(serveCalls, 1);
+  assert.equal(opened, "http://127.0.0.1:3846");
+  assert.equal(closed, true);
 });
 
 test("CLI no-arg non-TTY prints TUI guidance", () => {

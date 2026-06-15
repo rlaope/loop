@@ -456,6 +456,7 @@ function wikiText(locale) {
         backToNotes: "노트로 돌아가기",
         liveRunLog: "실시간 실행 로그",
         liveTail: "라이브 테일",
+        logSnapshot: "로그 스냅샷",
         commandToWatch: "터미널에서 보기",
         commandToResume: "Codex 이어보기",
         commandUnavailable: "이 실행에서 이어보기 명령을 만들 수 없습니다.",
@@ -534,6 +535,7 @@ function wikiText(locale) {
         backToNotes: "Back to notes",
         liveRunLog: "Live Run Log",
         liveTail: "Live tail",
+        logSnapshot: "Log snapshot",
         commandToWatch: "Watch in terminal",
         commandToResume: "Resume Codex",
         commandUnavailable: "No resume command can be built for this run.",
@@ -2171,8 +2173,13 @@ export function renderRunLogHtml({ id, log, state = null, stateDir }) {
     : hasHangul(log) ? "ko" : "en";
   const text = wikiText(locale);
   const content = log.trim() ? escapeHtml(log) : escapeHtml(text.outputEmpty);
-  const session = rawSessionFromState(state);
-  const sessionLabelText = sessionLabel(normalizeSession(session), locale);
+  const session = normalizeSession(rawSessionFromState(state));
+  const sessionLabelText = sessionLabel(session, locale);
+  const isLive = session?.status === "running";
+  const liveClass = isLive ? "live-pill" : "live-pill static";
+  const liveDot = isLive ? "<span class=\"live-dot\"></span>" : "";
+  const liveLabel = isLive ? text.liveTail : text.logSnapshot;
+  const pollingText = isLive ? text.pollingHint : text.logSnapshot;
   const status = isRecord(state) && typeof state.status === "string" ? state.status : text.notRecorded;
   const phase = isRecord(state) && typeof state.phase === "string" ? state.phase : text.notRecorded;
   const statusText = status === text.notRecorded ? status : displayStatus(status, locale);
@@ -2183,8 +2190,10 @@ export function renderRunLogHtml({ id, log, state = null, stateDir }) {
   const boot = jsonScript({
     id,
     emptyText: text.outputEmpty,
-    pollingHint: text.pollingHint
+    pollingHint: pollingText,
+    isLive
   });
+  const livePollingScript = isLive ? "setInterval(pollLog, 1000);" : "";
   return `<!doctype html>
 <html lang="${text.lang}">
 <head>
@@ -2210,6 +2219,7 @@ export function renderRunLogHtml({ id, log, state = null, stateDir }) {
     .traffic span:nth-child(2) { background: var(--amber); }
     .traffic span:nth-child(3) { background: var(--green); }
     .live-pill { display: inline-flex; align-items: center; gap: 7px; color: var(--green); font-size: 12px; font-weight: 800; }
+    .live-pill.static { color: var(--muted); }
     .live-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--green); box-shadow: 0 0 16px rgba(119,217,154,.75); animation: pulse 1.2s ease-in-out infinite; }
     pre { margin: 0; min-height: 68vh; max-height: 72vh; padding: 16px; overflow: auto; color: #f8fafc; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
     #cursor { display: inline-block; width: 8px; height: 16px; margin-left: 2px; background: var(--blue); vertical-align: -2px; animation: blink 1s steps(2, start) infinite; }
@@ -2244,7 +2254,7 @@ export function renderRunLogHtml({ id, log, state = null, stateDir }) {
       <div class="terminal">
         <div class="terminal-bar">
           <div class="traffic" aria-hidden="true"><span></span><span></span><span></span></div>
-          <span class="live-pill"><span class="live-dot"></span>${escapeHtml(text.liveTail)}</span>
+          <span class="${liveClass}">${liveDot}${escapeHtml(liveLabel)}</span>
         </div>
         <pre id="log-scroll"><code id="log-output">${content}</code><span id="cursor" aria-hidden="true"></span></pre>
       </div>
@@ -2261,7 +2271,7 @@ export function renderRunLogHtml({ id, log, state = null, stateDir }) {
             <code>${escapeHtml(logCommand)}</code>
             <button class="button" type="button" data-copy="${escapeHtml(logCommand)}">${escapeHtml(text.copy)}</button>
           </div>
-          <p class="small" id="live-meta">${escapeHtml(text.pollingHint)}</p>
+          <p class="small" id="live-meta">${escapeHtml(pollingText)}</p>
         </section>
         <section class="command-card">
           <h2>${escapeHtml(text.commandToResume)}</h2>
@@ -2316,7 +2326,7 @@ export function renderRunLogHtml({ id, log, state = null, stateDir }) {
       });
     }
     renderLog(output.textContent || "");
-    setInterval(pollLog, 1000);
+    ${livePollingScript}
   </script>
 </body>
 </html>`;

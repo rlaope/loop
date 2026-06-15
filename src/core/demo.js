@@ -1,12 +1,12 @@
 export const demoWorkflows = [
   {
-    title: "Darkwear luxury exhibition site",
-    description: "Start a fresh local project, let Loop create a git boundary, and watch the agent run.",
+    title: "Product quality loop",
+    description: "Improve a real dashboard through UX review, bug fixes, visual QA, docs, and follow-up issue capture.",
     commands: [
-      "mkdir darkwear-exhibit",
-      "cd darkwear-exhibit",
+      "mkdir dashboard-quality-loop",
+      "cd dashboard-quality-loop",
       "loop doctor",
-      "loop \"Build a darkwear luxury exhibition site MVP\"",
+      "loop \"Improve the current dashboard until a real user can understand it. Repeat through UX review, bug fixes, visual QA, documentation updates, and follow-up issue creation.\"",
       "loop status",
       "loop logs --follow",
       "loop wiki"
@@ -53,7 +53,7 @@ export function renderDemoGuide() {
   lines.push("Most users start with:");
   lines.push("");
   lines.push("```sh");
-  lines.push("loop \"Build the thing you want\"");
+  lines.push("loop \"Improve this product workflow until a real user can understand what is happening, what to read, and what to do next.\"");
   lines.push("```");
   lines.push("");
 
