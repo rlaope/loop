@@ -1,6 +1,6 @@
 ---
 name: loop
-description: Run a Loop Engineering workflow for a coding-agent objective with durable state, budget/stop rules, isolation checks, and human verification boundaries. Use when the user invokes $loop or asks the agent to keep iterating safely until a goal is complete.
+description: Run a Loop Engineering workflow for a coding-agent objective with durable state, budget/stop rules, isolation checks, and human verification boundaries. Use when the user invokes $loop, $Loop, or asks the agent to keep iterating safely until a goal is complete.
 ---
 
 # Loop
@@ -13,6 +13,7 @@ isolate, act, verify, persist, then stop or escalate.
 Use this skill for:
 
 - `$loop <objective>`
+- `$Loop <objective>`
 - "run a loop for this"
 - "keep iterating until this goal is complete"
 

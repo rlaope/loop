@@ -7,6 +7,12 @@ import { createServer as createNetServer } from "node:net";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
+/** @param {string} command */
+function commandExists(command) {
+  const result = spawnSync(command, ["--version"], { encoding: "utf8" });
+  return !(result.error && "code" in result.error && result.error.code === "ENOENT");
+}
+
 test("Codex plugin manifest points at skills", async () => {
   const manifest = JSON.parse(await readFile(".codex-plugin/plugin.json", "utf8"));
 
@@ -20,9 +26,65 @@ test("$loop skill describes the six Loop Engineering components", async () => {
   const skill = await readFile("skills/loop/SKILL.md", "utf8");
 
   assert.match(skill, /\$loop/);
+  assert.match(skill, /\$Loop/);
   for (const component of ["Automations", "Worktrees", "Skills", "Plugins/connectors", "Sub-agents", "Memory"]) {
     assert.match(skill, new RegExp(component.replace("/", "\\/")));
   }
+});
+
+test("Codex can install the Loop plugin and render $Loop skill context", {
+  skip: commandExists("codex") ? false : "codex CLI is not installed"
+}, async () => {
+  const root = await mkdtemp(join(tmpdir(), "loop-codex-plugin-"));
+  const codexHome = join(root, "codex-home");
+  const marketplace = join(root, "marketplace");
+  const pluginRoot = join(marketplace, "plugins", "loop");
+  await mkdir(join(marketplace, ".agents", "plugins"), { recursive: true });
+  await mkdir(join(pluginRoot, ".codex-plugin"), { recursive: true });
+  await mkdir(join(pluginRoot, "skills", "loop"), { recursive: true });
+  await mkdir(codexHome, { recursive: true });
+  await writeFile(
+    join(pluginRoot, ".codex-plugin", "plugin.json"),
+    await readFile(".codex-plugin/plugin.json", "utf8")
+  );
+  await writeFile(
+    join(pluginRoot, "skills", "loop", "SKILL.md"),
+    await readFile("skills/loop/SKILL.md", "utf8")
+  );
+  await writeFile(join(marketplace, ".agents", "plugins", "marketplace.json"), `${JSON.stringify({
+    name: "loop-local-test",
+    interface: { displayName: "Loop local test" },
+    plugins: [{
+      name: "loop",
+      source: { source: "local", path: "./plugins/loop" },
+      policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
+      category: "Productivity"
+    }]
+  }, null, 2)}\n`);
+  const env = { ...process.env, CODEX_HOME: codexHome };
+
+  const addMarketplace = spawnSync("codex", ["plugin", "marketplace", "add", marketplace], {
+    env,
+    encoding: "utf8"
+  });
+  assert.equal(addMarketplace.status, 0, addMarketplace.stderr || addMarketplace.stdout);
+  const addPlugin = spawnSync("codex", ["plugin", "add", "loop@loop-local-test"], {
+    env,
+    encoding: "utf8"
+  });
+  assert.equal(addPlugin.status, 0, addPlugin.stderr || addPlugin.stdout);
+  const pluginList = execFileSync("codex", ["plugin", "list"], { env, encoding: "utf8" });
+  const promptInput = execFileSync(
+    "codex",
+    ["debug", "prompt-input", "$Loop 현재 대시보드 품질 루프를 검증해줘"],
+    { env, encoding: "utf8" }
+  );
+
+  assert.match(pluginList, /loop@loop-local-test\s+installed, enabled/);
+  assert.match(promptInput, /loop:loop/);
+  assert.match(promptInput, /Available plugins/);
+  assert.match(promptInput, /`Loop`/);
+  assert.match(promptInput, /\$Loop 현재 대시보드 품질 루프를 검증해줘/);
 });
 
 test("CLI dry-run writes durable state without source edits", async () => {
