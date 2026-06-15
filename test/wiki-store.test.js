@@ -438,6 +438,19 @@ test("dashboard renders run log pages", () => {
   assert.match(html, /라이브 테일/);
 });
 
+test("dashboard renders missing run logs as snapshots instead of live tails", () => {
+  const html = renderRunLogHtml({
+    id: "missing-run",
+    log: "",
+    state: null,
+    stateDir: ".loop"
+  });
+
+  assert.match(html, /Log snapshot/);
+  assert.doesNotMatch(html, /Live tail/);
+  assert.doesNotMatch(html, /setInterval\(pollLog, 1000\)/);
+});
+
 test("dashboard server serves the graph view route", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "loop-wiki-graph-route-"));
   const state = createRunState({
@@ -589,6 +602,7 @@ test("dashboard action endpoints add notes and update run state with confirmatio
       redirect: "manual"
     });
     const afterVerify = await readRunState(state.id, { stateDir });
+    const notesAfterVerify = await listWikiNotes({ stateDir });
     const complete = await fetch(`http://127.0.0.1:${port}/actions/mark-complete`, {
       method: "POST",
       body: new URLSearchParams({
@@ -603,6 +617,7 @@ test("dashboard action endpoints add notes and update run state with confirmatio
       redirect: "manual"
     });
     const afterComplete = await readRunState(state.id, { stateDir });
+    const notesAfterComplete = await listWikiNotes({ stateDir });
     const deleteRun = await fetch(`http://127.0.0.1:${port}/actions/delete-run`, {
       method: "POST",
       body: new URLSearchParams({
@@ -617,6 +632,7 @@ test("dashboard action endpoints add notes and update run state with confirmatio
       redirect: "manual"
     });
     const afterDelete = await readRunState(state.id, { stateDir });
+    const notesAfterDelete = await listWikiNotes({ stateDir });
 
     assert.equal(addNote.status, 303);
     assert.equal(afterAdd.length, 2);
@@ -625,11 +641,15 @@ test("dashboard action endpoints add notes and update run state with confirmatio
     assert.equal(afterVerify.ok, true);
     assert.equal(afterVerify.ok && afterVerify.state.phase, "verify");
     assert.ok(afterVerify.ok && afterVerify.state.verificationEvidence.some((item) => item.summary === "Dashboard verification passed."));
+    assert.ok(notesAfterVerify.some((note) => note.kind === "run" && note.phase === "verify"));
     assert.equal(complete.status, 303);
     assert.equal(afterComplete.ok, true);
     assert.equal(afterComplete.ok && afterComplete.state.status, "complete");
+    assert.ok(notesAfterComplete.some((note) => note.kind === "run" && note.status === "complete"));
     assert.equal(deleteRun.status, 303);
     assert.equal(afterDelete.ok, false);
+    assert.ok(!notesAfterDelete.some((note) => note.kind === "run" && note.runId === state.id));
+    assert.ok(notesAfterDelete.some((note) => note.kind === "plan" && note.title === "Dashboard plan"));
   } finally {
     if (served.server) {
       served.server.close();

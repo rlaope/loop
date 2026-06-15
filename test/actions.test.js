@@ -11,6 +11,7 @@ import {
   deleteRunAction,
   deleteWikiNoteAction,
   listRunsAction,
+  listWikiNotes,
   markCompleteAction,
   markVerificationAction,
   prepareCodexOpenAction,
@@ -19,9 +20,11 @@ import {
   readRunLog,
   readRunLogTailAction,
   readRunState,
+  readWikiNote,
   runLogPath,
   writeRunState,
-  writeWikiForRunState
+  writeWikiForRunState,
+  writeWikiSupportingNote
 } from "../src/index.js";
 
 test("action module stays inside the domain boundary", async () => {
@@ -104,6 +107,7 @@ test("verification and completion actions update run state through the store", a
     now: new Date("2026-06-13T08:00:00.000Z")
   });
   await writeRunState(state, { stateDir });
+  await writeWikiForRunState(state, { stateDir });
 
   const verified = await markVerificationAction({
     stateDir,
@@ -111,18 +115,24 @@ test("verification and completion actions update run state through the store", a
     confirmation: createActionConfirmation({ action: "verify-run", targetId: state.id, stateDir }),
     summary: "manual QA passed"
   });
+  const notesAfterVerify = await listWikiNotes({ stateDir });
+  const noteAfterVerify = await readWikiNote(notesAfterVerify[0].id, { stateDir });
   const blockedComplete = await markCompleteAction({ stateDir, id: state.id });
   const completed = await markCompleteAction({
     stateDir,
     id: state.id,
     confirmation: createActionConfirmation({ action: "mark-complete", targetId: state.id, stateDir })
   });
+  const notesAfterComplete = await listWikiNotes({ stateDir });
+  const noteAfterComplete = await readWikiNote(notesAfterComplete[0].id, { stateDir });
 
   assert.equal(verified.ok, true);
   assert.ok("state" in verified);
   const verifiedState = verified.state;
   assert.ok(verifiedState);
   assert.equal(verifiedState.phase, "verify");
+  assert.equal(notesAfterVerify[0].phase, "verify");
+  assert.match(noteAfterVerify.markdown, /manual QA passed/);
   assert.equal(blockedComplete.ok, false);
   assert.equal(completed.ok, true);
   assert.ok("state" in completed);
@@ -130,6 +140,37 @@ test("verification and completion actions update run state through the store", a
   assert.ok(completedState);
   assert.equal(completedState.status, "complete");
   assert.equal(completedState.verificationEvidence.length, 2);
+  assert.equal(notesAfterComplete[0].status, "complete");
+  assert.match(noteAfterComplete.markdown, /complete/);
+});
+
+test("delete run action removes the run wiki card while preserving attached notes", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-actions-delete-run-wiki-"));
+  const state = createRunState({
+    objective: "Delete run wiki objective",
+    now: new Date("2026-06-13T08:00:00.000Z")
+  });
+  await writeRunState(state, { stateDir });
+  const runNote = await writeWikiForRunState(state, { stateDir });
+  const attached = await writeWikiSupportingNote({
+    stateDir,
+    runId: state.id,
+    kind: "plan",
+    title: "Preserved plan",
+    body: "Keep this attached note after deleting the run state."
+  });
+
+  const deleted = await deleteRunAction({
+    stateDir,
+    id: state.id,
+    confirmation: createActionConfirmation({ action: "delete-run", targetId: state.id, stateDir })
+  });
+  const notes = await listWikiNotes({ stateDir });
+
+  assert.equal(deleted.ok, true);
+  assert.equal((await readRunState(state.id, { stateDir })).ok, false);
+  assert.ok(!notes.some((note) => note.id === runNote.id));
+  assert.ok(notes.some((note) => note.id === attached.id));
 });
 
 test("follow-up action creates lineage without launching an agent", async () => {

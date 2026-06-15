@@ -298,7 +298,8 @@ test("CLI demo prints workflows without writing local state", async () => {
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(result.stdout, /Loop Demo/);
-  assert.match(result.stdout, /darkwear luxury exhibition/i);
+  assert.match(result.stdout, /Product quality loop/);
+  assert.match(result.stdout, /real user can understand/i);
   assert.match(result.stdout, /loop doctor/);
   assert.match(result.stdout, /loop wiki/);
   assert.match(result.stdout, /loop --dry-run/);

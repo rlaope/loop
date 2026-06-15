@@ -12,7 +12,7 @@ import {
   readGraphAction,
   readRunLogTailAction
 } from "./actions.js";
-import { dashboardUrl } from "./wiki-dashboard.js";
+import { dashboardUrl, serveWikiDashboard } from "./wiki-dashboard.js";
 import { openTarget } from "./open-target.js";
 import {
   codexCommandFromOpenEffect,
@@ -137,7 +137,7 @@ export function renderTuiHome(snapshot) {
     "Commands",
     "  1-9 select run    logs show tail       wiki list notes",
     "  note add note     verify add evidence  complete mark complete",
-    "  follow prepare    codex open terminal  dashboard open wiki",
+    "  follow prepare    codex open terminal  dashboard start/open wiki",
     "  agent switch      refresh              q quit",
     ""
   ].join("\n");
@@ -152,6 +152,17 @@ function writeStatus(output, message) {
 }
 
 /**
+ * @param {{ ok: boolean, error?: { message?: string, kind?: string } }} result
+ * @param {string} successMessage
+ */
+function actionStatus(result, successMessage) {
+  if (result.ok) {
+    return successMessage;
+  }
+  return `Action failed: ${result.error?.message ?? result.error?.kind ?? "unknown error"}`;
+}
+
+/**
  * @param {{
  *   stateDir?: string,
  *   input?: NodeJS.ReadableStream & { isTTY?: boolean },
@@ -160,7 +171,8 @@ function writeStatus(output, message) {
  *   clearScreen?: boolean,
  *   env?: NodeJS.ProcessEnv,
  *   openTargetImpl?: typeof openTarget,
- *   launchTerminalCommandImpl?: typeof launchTerminalCommand
+ *   launchTerminalCommandImpl?: typeof launchTerminalCommand,
+ *   serveWikiDashboardImpl?: typeof serveWikiDashboard
  * }} [options]
  */
 export async function runLoopTui({
@@ -171,7 +183,8 @@ export async function runLoopTui({
   clearScreen = true,
   env = process.env,
   openTargetImpl = openTarget,
-  launchTerminalCommandImpl = launchTerminalCommand
+  launchTerminalCommandImpl = launchTerminalCommand,
+  serveWikiDashboardImpl = serveWikiDashboard
 } = {}) {
   if (!input.isTTY || !output.isTTY) {
     throw new Error("Loop Agent Console requires an interactive terminal.");
@@ -179,6 +192,8 @@ export async function runLoopTui({
   let selectedRunId = /** @type {string | null} */ (null);
   let agent = /** @type {"codex" | "claudecode"} */ ("codex");
   let showLogo = true;
+  /** @type {import("node:http").Server | null} */
+  let dashboardServer = null;
   const rl = createInterface({ input, output });
   try {
     while (true) {
@@ -217,9 +232,23 @@ export async function runLoopTui({
         continue;
       }
       if (answer === "dashboard") {
-        const url = dashboardUrl();
-        openTargetImpl(url);
-        writeStatus(output, `Dashboard: ${url}`);
+        try {
+          const url = dashboardUrl();
+          if (!dashboardServer) {
+            const served = await serveWikiDashboardImpl({ stateDir });
+            if (served.server) {
+              dashboardServer = served.server;
+            }
+            openTargetImpl(served.url);
+            writeStatus(output, `Dashboard: ${served.url}`);
+          } else {
+            openTargetImpl(url);
+            writeStatus(output, `Dashboard: ${url}`);
+          }
+        } catch (error) {
+          const fallbackUrl = dashboardUrl();
+          writeStatus(output, `Dashboard failed to start: ${error instanceof Error ? error.message : String(error)}\nURL: ${fallbackUrl}`);
+        }
         continue;
       }
       if (!selectedRunId) {
@@ -242,7 +271,7 @@ export async function runLoopTui({
         const title = (await rl.question("Title: ")).trim();
         const body = (await rl.question("Body: ")).trim();
         if (title && body) {
-          await addWikiNoteAction({
+          const result = await addWikiNoteAction({
             stateDir,
             runId: selectedRunId,
             targetId: selectedRunId,
@@ -251,29 +280,36 @@ export async function runLoopTui({
             body,
             confirmation: createActionConfirmation({ action: "add-note", targetId: selectedRunId, stateDir })
           });
+          writeStatus(output, actionStatus(result, "Note added."));
+        } else {
+          writeStatus(output, "Title and body are required.");
         }
         continue;
       }
       if (answer === "verify") {
         const summary = (await rl.question("Evidence summary: ")).trim();
         if (summary) {
-          await markVerificationAction({
+          const result = await markVerificationAction({
             stateDir,
             id: selectedRunId,
             summary,
             confirmation: createActionConfirmation({ action: "verify-run", targetId: selectedRunId, stateDir })
           });
+          writeStatus(output, actionStatus(result, "Verification evidence recorded."));
+        } else {
+          writeStatus(output, "Evidence summary is required.");
         }
         continue;
       }
       if (answer === "complete") {
         const confirm = (await rl.question(`Mark ${selectedRunId} complete? y/N `)).trim().toLowerCase();
         if (confirm === "y" || confirm === "yes") {
-          await markCompleteAction({
+          const result = await markCompleteAction({
             stateDir,
             id: selectedRunId,
             confirmation: createActionConfirmation({ action: "mark-complete", targetId: selectedRunId, stateDir })
           });
+          writeStatus(output, actionStatus(result, "Run marked complete."));
         }
         continue;
       }
@@ -328,5 +364,8 @@ export async function runLoopTui({
     }
   } finally {
     rl.close();
+    if (dashboardServer) {
+      await new Promise((resolve) => dashboardServer?.close(resolve));
+    }
   }
 }
