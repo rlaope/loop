@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 
-import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, createWriteStream, existsSync, readFileSync, realpathSync, watchFile, unwatchFile } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, realpathSync, watchFile, unwatchFile } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 import {
   appendEvidence,
+  agentCommand,
+  buildAgentPrompt,
   checkRepoBoundary,
   createRunState,
   dashboardActionForRun,
@@ -18,12 +20,18 @@ import {
   evaluatePolicyGate,
   listRunStates,
   listWikiNotes,
+  noArgTuiDispatch,
+  openTarget,
   printHelp,
   readRunLog,
+  readRunState,
   readWikiNote,
   recordBudgetActivity,
   renderWikiList,
   runLogPath,
+  runAgentProcess,
+  runLoopTui,
+  scriptPathFromImportMetaUrl,
   serveWikiDashboard,
   startDetachedWikiDashboard,
   transitionRunState,
@@ -48,8 +56,10 @@ const flagsWithValues = new Set([
   "--isolation",
   "--body",
   "--kind",
+  "--lineage-source",
   "--objective",
   "--parent",
+  "--parent-run",
   "--port",
   "--run",
   "--state-dir",
@@ -206,6 +216,17 @@ function normalizeAgent(agent) {
     return "claudecode";
   }
   throw new Error(`Unsupported agent: ${agent}`);
+}
+
+/** @param {string | undefined} source */
+function normalizeLineageSource(source) {
+  if (!source) {
+    return undefined;
+  }
+  if (source === "tui" || source === "dashboard" || source === "cli") {
+    return source;
+  }
+  throw new Error(`Unsupported lineage source: ${source}`);
 }
 
 /** @param {string} objective */
@@ -490,6 +511,7 @@ async function handleLogsCommand({ stateDir = ".loop" } = {}) {
   let offset = existing.length;
   process.stderr.write(`Following ${logPath}. Press Ctrl-C to stop.\n`);
   await new Promise(() => {
+    setInterval(() => {}, 2 ** 31 - 1);
     watchFile(logPath, { interval: 500 }, () => {
       try {
         const next = readFileFrom(logPath, offset);
@@ -502,31 +524,6 @@ async function handleLogsCommand({ stateDir = ".loop" } = {}) {
       }
     });
   });
-}
-
-/**
- * @param {string} target
- */
-function openTarget(target) {
-  if (process.env.LOOP_OPEN_TARGET_LOG) {
-    appendFileSync(process.env.LOOP_OPEN_TARGET_LOG, `${target}\n`);
-    return;
-  }
-  if (!process.stdout.isTTY) {
-    return;
-  }
-  /** @type {Partial<Record<NodeJS.Platform, string>>} */
-  const commandByPlatform = {
-    darwin: "open",
-    win32: "cmd",
-    linux: "xdg-open"
-  };
-  const opener = commandByPlatform[process.platform];
-  if (!opener) {
-    return;
-  }
-  const argsForOpen = process.platform === "win32" ? ["/c", "start", "", target] : [target];
-  spawnSync(opener, argsForOpen, { stdio: "ignore" });
 }
 
 /** @param {string} cwd */
@@ -711,32 +708,8 @@ async function handleWikiCommand() {
   process.exit(1);
 }
 
-/**
- * @param {string} objective
- * @param {{ writeMode: boolean }} options
- */
-function buildAgentPrompt(objective, { writeMode }) {
-  return [
-    "You are running under Loop Engineering.",
-    "",
-    `Objective: ${objective}`,
-    "",
-    "Loop contract:",
-    "- Understand the objective before editing.",
-    "- Keep work scoped to the current repository.",
-    "- Use the smallest useful implementation path.",
-    "- Verify changed behavior with the relevant tests or checks.",
-    "- Stop when evidence shows the objective is complete or a blocker requires human judgment.",
-    "- Leave a concise human-readable summary of what changed and what remains risky.",
-    "",
-    writeMode
-      ? "This run has explicit write approval from the loop CLI invocation."
-      : "This run is read-only. Do not modify files."
-  ].join("\n");
-}
-
-/** @param {{ objective: string, stateDir: string, writeMode: boolean, agent: string }} options */
-async function writeInitialRunState({ objective, stateDir, writeMode, agent }) {
+/** @param {{ objective: string, stateDir: string, writeMode: boolean, agent: string, lineage?: import("../src/core/run-state.js").RunLineage }} options */
+async function writeInitialRunState({ objective, stateDir, writeMode, agent, lineage }) {
   const now = new Date();
   const state = createRunState({
     objective,
@@ -747,6 +720,7 @@ async function writeInitialRunState({ objective, stateDir, writeMode, agent }) {
           approvalExpiresAt: new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString()
         }
       : {},
+    lineage,
     now
   });
   const active = {
@@ -815,7 +789,7 @@ async function maybeStartDashboardForRun({ stateDir, explicitFlag, host, port })
     return;
   }
   const pid = startDetachedWikiDashboard({
-    scriptPath: new URL(import.meta.url).pathname,
+    scriptPath: scriptPathFromImportMetaUrl(import.meta.url),
     stateDir,
     host,
     port
@@ -827,145 +801,6 @@ async function maybeStartDashboardForRun({ stateDir, explicitFlag, host, port })
     return;
   }
   process.stderr.write(`Loop Wiki dashboard did not confirm startup${pid ? ` (pid ${pid})` : ""}.\n`);
-}
-
-/**
- * @param {"codex" | "claudecode"} agent
- * @param {string} prompt
- * @param {boolean} writeMode
- */
-function agentCommand(agent, prompt, writeMode) {
-  if (agent === "codex") {
-    return {
-      command: "codex",
-      displayArgs: [
-        "--ask-for-approval",
-        "never",
-        "exec",
-        "--sandbox",
-        writeMode ? "workspace-write" : "read-only",
-        "--cd",
-        process.cwd(),
-        "<loop prompt>"
-      ],
-      args: [
-        "--ask-for-approval",
-        "never",
-        "exec",
-        "--sandbox",
-        writeMode ? "workspace-write" : "read-only",
-        "--cd",
-        process.cwd(),
-        prompt
-      ]
-    };
-  }
-  return {
-    command: "claude",
-    displayArgs: [
-      "--print",
-      "--permission-mode",
-      writeMode ? "acceptEdits" : "plan",
-      "<loop prompt>"
-    ],
-    args: [
-      "--print",
-      "--permission-mode",
-      writeMode ? "acceptEdits" : "plan",
-      prompt
-    ]
-  };
-}
-
-/**
- * @param {import("../src/core/run-state.js").LoopRunState} state
- * @param {Record<string, unknown>} session
- */
-function withSession(state, session) {
-  const stateRecord = /** @type {Record<string, unknown>} */ (state);
-  return {
-    ...state,
-    session: {
-      ...(isRecord(stateRecord.session) ? stateRecord.session : {}),
-      ...session
-    },
-    updatedAt: new Date().toISOString()
-  };
-}
-
-/**
- * @param {{ command: string, args: string[], displayArgs: string[] }} command
- * @param {{ agent: string, state: import("../src/core/run-state.js").LoopRunState, stateDir: string, onStarted?: (state: import("../src/core/run-state.js").LoopRunState, paths: { jsonPath?: string, summaryPath?: string }) => Promise<void> }} options
- */
-async function runAgentProcess(command, { agent, state, stateDir, onStarted }) {
-  const logPath = runLogPath({ stateDir, id: state.id });
-  const log = createWriteStream(logPath, { flags: "a" });
-  log.write(`[loop] ${new Date().toISOString()} starting ${agent}\n`);
-  log.write(`[loop] command: ${command.command} ${command.displayArgs.join(" ")}\n\n`);
-  const child = spawn(command.command, command.args, {
-    cwd: process.cwd(),
-    env: process.env,
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-  const runningState = withSession(state, {
-    agent,
-    status: "running",
-    pid: child.pid ?? null,
-    command: command.command,
-    args: command.displayArgs,
-    cwd: process.cwd(),
-    logPath,
-    startedAt: new Date().toISOString(),
-    endedAt: null,
-    exitCode: null,
-    signal: null
-  });
-  const runningPaths = await writeRunState(runningState, { stateDir });
-  if (onStarted) {
-    await onStarted(runningState, runningPaths);
-  }
-
-  child.stdout.on("data", (chunk) => {
-    process.stdout.write(chunk);
-    log.write(chunk);
-  });
-  child.stderr.on("data", (chunk) => {
-    process.stderr.write(chunk);
-    log.write(chunk);
-  });
-
-  /** @type {{ error?: Error, exitCode: number, signal: NodeJS.Signals | null }} */
-  const result = await new Promise((resolve) => {
-    let settled = false;
-    child.once("error", (error) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      log.write(`\n[loop] ${new Date().toISOString()} failed to start: ${error.message}\n`);
-      resolve({ error, exitCode: 1, signal: null });
-    });
-    child.once("close", (code, signal) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      const exitCode = code ?? (signal ? 1 : 0);
-      log.write(`\n[loop] ${new Date().toISOString()} ${agent} exited with status ${exitCode}${signal ? ` signal ${signal}` : ""}.\n`);
-      resolve({ exitCode, signal });
-    });
-  });
-  await new Promise((resolve) => log.end(resolve));
-  return {
-    ...result,
-    state: withSession(runningState, {
-      status: result.error ? "failed_to_start" : "exited",
-      endedAt: new Date().toISOString(),
-      exitCode: result.exitCode,
-      signal: result.signal
-    }),
-    logPath
-  };
 }
 
 /**
@@ -982,6 +817,8 @@ async function runAgentProcess(command, { agent, state, stateDir, onStarted }) {
  * @param {boolean} options.wikiDashboard
  * @param {string} options.dashboardHost
  * @param {number} options.dashboardPort
+ * @param {string | undefined} options.parentRunId
+ * @param {"tui" | "dashboard" | "cli" | undefined} options.lineageSource
  */
 async function runAgent({
   agent,
@@ -995,7 +832,9 @@ async function runAgent({
   acknowledgeLocal,
   wikiDashboard,
   dashboardHost: host,
-  dashboardPort: port
+  dashboardPort: port,
+  parentRunId,
+  lineageSource
 }) {
   try {
     ensureProjectBoundary({ writeMode, expectedRoot });
@@ -1003,7 +842,23 @@ async function runAgent({
     process.stderr.write(`Project boundary failed: ${errorMessage(error)}\n`);
     process.exit(2);
   }
-  const { state, paths } = await writeInitialRunState({ objective, stateDir, writeMode, agent });
+  /** @type {import("../src/core/run-state.js").RunLineage | undefined} */
+  let lineage;
+  if (parentRunId) {
+    const parent = await readRunState(parentRunId, { stateDir });
+    if (!parent.ok) {
+      process.stderr.write(`Parent run not found for follow-up: ${parentRunId}\n`);
+      process.exit(1);
+    }
+    lineage = {
+      parentRunId,
+      rootRunId: parent.state.lineage?.rootRunId ?? parent.state.id,
+      relationship: "continues",
+      prompt: objective,
+      createdFrom: lineageSource ?? "cli"
+    };
+  }
+  const { state, paths } = await writeInitialRunState({ objective, stateDir, writeMode, agent, lineage });
   const gate = evaluatePolicyGate(state, {
     mode: writeMode ? "write" : "read",
     isolationDecision: writeMode
@@ -1122,6 +977,23 @@ try {
   process.exit(1);
 }
 
+const noArgAction = noArgTuiDispatch({
+  argCount: rawArgs.length,
+  stdinTTY: Boolean(process.stdin.isTTY),
+  stdoutTTY: Boolean(process.stdout.isTTY)
+});
+
+if (noArgAction === "open-tui") {
+  await runLoopTui({ stateDir: ".loop" });
+  process.exit(0);
+}
+
+if (noArgAction === "non-interactive-guidance") {
+  process.stderr.write("loop with no arguments opens the Loop Agent Console in an interactive terminal.\n");
+  process.stderr.write("Use loop \"your objective\" or loop run \"your objective\" for direct run mode.\n");
+  process.exit(1);
+}
+
 if (command === "status" || command === "runs" || command === "logs") {
   let stateDir;
   try {
@@ -1230,6 +1102,9 @@ if (isRunMode) {
   let isolationMode;
   let host;
   let port;
+  let parentRunId;
+  /** @type {"tui" | "dashboard" | "cli" | undefined} */
+  let lineageSource;
   try {
     resolvedAgent = normalizeAgent(valueFor("--agent")) ?? await chooseAgent();
     expectedRoot = valueFor("--expected-root");
@@ -1237,6 +1112,8 @@ if (isRunMode) {
     isolationMode = valueFor("--isolation") ?? "local";
     host = dashboardHost();
     port = dashboardPort();
+    parentRunId = valueFor("--parent-run");
+    lineageSource = normalizeLineageSource(valueFor("--lineage-source")) ?? (parentRunId ? "cli" : undefined);
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n\n`);
     printHelp(process.stderr);
@@ -1264,7 +1141,9 @@ if (isRunMode) {
     acknowledgeLocal: has("--acknowledge-local") || isRunMode,
     wikiDashboard: has("--wiki-dashboard"),
     dashboardHost: host,
-    dashboardPort: port
+    dashboardPort: port,
+    parentRunId,
+    lineageSource
   });
 }
 

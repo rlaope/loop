@@ -387,10 +387,71 @@ test("CLI codex agent mode runs through policy gate and records state", async ()
   assert.match(log, /starting codex/);
   assert.equal(state.approvals.humanApproval, true);
   assert.equal(state.verificationEvidence.at(-1).status, "passed");
-  assert.deepEqual(codexArgs.slice(0, 3), ["--ask-for-approval", "never", "exec"]);
+  assert.deepEqual(codexArgs.slice(0, 2), ["exec", "--sandbox"]);
+  assert.doesNotMatch(codexArgs.join(" "), /--ask-for-approval/);
   assert.ok(codexArgs.includes("--sandbox"));
   assert.ok(codexArgs.includes("workspace-write"));
   assert.match(output.wikiPaths.notePath, /wiki\/user/);
+});
+
+test("CLI follow-up run records parent lineage from prepared commands", async () => {
+  const repo = await mkdtemp(join(tmpdir(), "loop-agent-followup-repo-"));
+  const fakeBin = await mkdtemp(join(tmpdir(), "loop-fake-bin-"));
+  const stateDir = join(repo, ".loop");
+  const fakeCodex = join(fakeBin, "codex");
+  await writeFile(fakeCodex, [
+    "#!/usr/bin/env node",
+    "console.log('follow-up agent done');"
+  ].join("\n"));
+  await chmod(fakeCodex, 0o755);
+  git(["init", "-b", "main"], repo);
+
+  const parentOutput = execFileSync(
+    process.execPath,
+    [
+      resolve("bin/loop.js"),
+      "--dry-run",
+      "--objective",
+      "Parent darkwear exhibit",
+      "--state-dir",
+      stateDir
+    ],
+    { cwd: repo, encoding: "utf8" }
+  );
+  const parent = JSON.parse(parentOutput);
+  const result = spawnSync(
+    process.execPath,
+    [
+      resolve("bin/loop.js"),
+      "run",
+      "--agent",
+      "codex",
+      "--no-interview",
+      "--state-dir",
+      stateDir,
+      "--parent-run",
+      parent.stateId,
+      "--lineage-source",
+      "dashboard",
+      "Continue darkwear exhibit"
+    ],
+    {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`
+      }
+    }
+  );
+  const output = JSON.parse(result.stdout.slice(result.stdout.indexOf("{")));
+  const state = JSON.parse(await readFile(output.paths.jsonPath, "utf8"));
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(state.lineage.parentRunId, parent.stateId);
+  assert.equal(state.lineage.rootRunId, parent.stateId);
+  assert.equal(state.lineage.createdFrom, "dashboard");
+  assert.equal(state.lineage.relationship, "continues");
 });
 
 test("CLI run opens an already-running dashboard URL", async () => {
@@ -492,6 +553,15 @@ test("CLI exposes run status, run list, and logs", async () => {
     cwd: repo,
     encoding: "utf8"
   });
+  const follow = spawnSync(
+    process.execPath,
+    [resolve("bin/loop.js"), "logs", output.stateId, "--follow", "--state-dir", stateDir],
+    {
+      cwd: repo,
+      encoding: "utf8",
+      timeout: 700
+    }
+  );
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /agent streamed line/);
@@ -499,6 +569,10 @@ test("CLI exposes run status, run list, and logs", async () => {
   assert.match(status, new RegExp(output.stateId));
   assert.match(runs, /codex exited \(0\)/);
   assert.match(logs, /agent streamed line/);
+  assert.equal(follow.error && "code" in follow.error ? follow.error.code : undefined, "ETIMEDOUT");
+  assert.notEqual(follow.status, 13);
+  assert.match(follow.stdout, /agent streamed line/);
+  assert.doesNotMatch(follow.stderr, /unsettled top-level await/);
 });
 
 test("CLI run initializes a local git repo when none exists", async () => {

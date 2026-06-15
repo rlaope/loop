@@ -23,6 +23,8 @@ const REQUIRED_BUDGET_FIELDS = [
 const SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const VALID_PHASES = new Set(["intake", "plan", "discover", "isolate", "act", "verify", "persist", "stop"]);
 const VALID_STATUSES = new Set(["active", ...terminalOutcomes]);
+const VALID_LINEAGE_RELATIONSHIPS = new Set(["continues"]);
+const VALID_LINEAGE_SOURCES = new Set(["tui", "dashboard", "cli"]);
 
 /**
  * @param {unknown} value
@@ -152,6 +154,30 @@ export function validateRunState(state) {
       typeof state.approvals.approvalExpiresAt !== "string"
     ) {
       errors.push("approvals.approvalExpiresAt must be a string or null");
+    }
+  }
+
+  if (state.lineage !== undefined) {
+    if (!isRecord(state.lineage)) {
+      errors.push("lineage must be an object when present");
+    } else {
+      for (const field of ["parentRunId", "rootRunId", "prompt", "createdFrom", "relationship"]) {
+        if (typeof state.lineage[field] !== "string" || state.lineage[field] === "") {
+          errors.push(`lineage.${field} must be a non-empty string`);
+        }
+      }
+      if (typeof state.lineage.parentRunId === "string" && !SAFE_ID_PATTERN.test(state.lineage.parentRunId)) {
+        errors.push("lineage.parentRunId must be a safe filename token");
+      }
+      if (typeof state.lineage.rootRunId === "string" && !SAFE_ID_PATTERN.test(state.lineage.rootRunId)) {
+        errors.push("lineage.rootRunId must be a safe filename token");
+      }
+      if (typeof state.lineage.relationship === "string" && !VALID_LINEAGE_RELATIONSHIPS.has(state.lineage.relationship)) {
+        errors.push(`lineage.relationship must be one of: ${Array.from(VALID_LINEAGE_RELATIONSHIPS).join(", ")}`);
+      }
+      if (typeof state.lineage.createdFrom === "string" && !VALID_LINEAGE_SOURCES.has(state.lineage.createdFrom)) {
+        errors.push(`lineage.createdFrom must be one of: ${Array.from(VALID_LINEAGE_SOURCES).join(", ")}`);
+      }
     }
   }
 

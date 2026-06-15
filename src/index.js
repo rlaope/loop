@@ -1,5 +1,25 @@
 export { allOutcomes, isKnownOutcome, isTerminalOutcome, nonTerminalOutcomes, terminalOutcomes } from "./core/outcomes.js";
+export { agentCommand, buildAgentPrompt, runAgentProcess, withSession } from "./core/agent-runner.js";
+export {
+  DANGEROUS_ACTIONS,
+  addWikiNoteAction,
+  createActionConfirmation,
+  deleteRunAction,
+  deleteWikiNoteAction,
+  listRunsAction,
+  listWikiNotesAction,
+  markCompleteAction,
+  markVerificationAction,
+  prepareCodexOpenAction,
+  prepareFollowUpRunAction,
+  readGraphAction,
+  readRunAction,
+  readRunLogTailAction,
+  readWikiNoteAction,
+  requireActionConfirmation
+} from "./core/actions.js";
 export { evaluateBudget, recordBudgetActivity } from "./core/budget.js";
+export { scriptPathFromImportMetaUrl, startDetachedWikiDashboard } from "./core/dashboard-process.js";
 export { hasActiveApproval, requireWriteApproval } from "./core/approval.js";
 export { checkIsolationDecision, checkRepoBoundary } from "./core/preflight.js";
 export { evaluatePolicyGate } from "./core/policy.js";
@@ -37,13 +57,33 @@ export {
   DEFAULT_WIKI_PORT,
   WIKI_FAILURE_EXIT_CODE,
   assertWikiDashboardHost,
+  createDashboardConfirmationToken,
   dashboardActionForRun,
   dashboardUrl,
   getDashboardStatus,
   serveWikiDashboard,
-  startDetachedWikiDashboard,
+  verifyDashboardConfirmationToken,
+  dashboardSecretPath,
+  loadOrCreateDashboardSecret,
   waitForDashboardReady
 } from "./core/wiki-dashboard.js";
+export { openTarget } from "./core/open-target.js";
+export {
+  codexCommandFromOpenEffect,
+  codexCommandSpecFromOpenEffect,
+  codexResumeCommand,
+  codexResumeCommandSpec,
+  codexSessionIdFromLog,
+  commandInCwd,
+  followLogCommand,
+  launchTerminalCommand,
+  loopRunCommand,
+  shellCommand,
+  shellQuote,
+  terminalCommandDisplay,
+  terminalLaunchCommand
+} from "./core/terminal-launcher.js";
+export { noArgTuiDispatch, renderTuiHome, runLoopTui } from "./core/tui.js";
 
 export const packageName = "@rlaope/loop";
 
@@ -51,6 +91,7 @@ export const packageName = "@rlaope/loop";
 export function printHelp(stream) {
   stream.write(`Loop Engineering toolkit\n\n`);
   stream.write(`Usage:\n`);
+  stream.write(`  loop\n`);
   stream.write(`  loop --help\n`);
   stream.write(`  loop --version\n`);
   stream.write(`  loop "prompt"\n`);
@@ -83,6 +124,8 @@ export function printHelp(stream) {
   stream.write(`  --body           Wiki note body for loop wiki add.\n`);
   stream.write(`  --run            Attach a wiki note to the run note for this run id.\n`);
   stream.write(`  --parent         Attach a wiki note to a specific parent wiki note id.\n`);
+  stream.write(`  --parent-run     Continue from an existing Loop run and record lineage.\n`);
+  stream.write(`  --lineage-source Source for --parent-run: cli, tui, or dashboard.\n`);
   stream.write(`  --stdin          Read loop wiki add body from standard input.\n`);
   stream.write(`  --isolation      Write isolation mode: branch, worktree, or local.\n`);
   stream.write(`  --acknowledge-local  Explicitly acknowledge local-mode write risk.\n`);
@@ -91,7 +134,8 @@ export function printHelp(stream) {
   stream.write(`  --allow-no-remote  Allow write-capable runs in a local repo with no origin.\n`);
   stream.write(`  --no-interview   Skip ambiguity interview for automation or tests.\n`);
   stream.write(`\n`);
+  stream.write(`No-argument loop opens the local Agent Console TUI in an interactive terminal.\n`);
   stream.write(`Dry-run mode writes durable Loop state and local wiki artifacts only.\n`);
   stream.write(`Run mode records state, creates a local git boundary when needed, asks clarifying questions, then launches the selected agent.\n`);
-  stream.write(`Wiki mode reads local .loop/wiki notes and opens a localhost dashboard.\n`);
+  stream.write(`Wiki mode reads local .loop/wiki notes and opens a localhost dashboard with graph, note, log, follow-up, and Codex-open controls.\n`);
 }

@@ -93,6 +93,45 @@ test("rejects unbounded lifecycle fields", () => {
   assert.ok(result.errors.join("\n").includes("status must be one of"));
 });
 
+test("validates optional follow-up lineage", () => {
+  const base = createRunState({ objective: "Parent run" });
+  const child = createRunState({
+    objective: "Child run",
+    lineage: {
+      parentRunId: base.id,
+      rootRunId: base.id,
+      relationship: "continues",
+      prompt: "Child run",
+      createdFrom: "tui"
+    }
+  });
+
+  assert.equal(validateRunState(base).valid, true);
+  assert.equal(validateRunState(child).valid, true);
+  assert.equal(child.lineage?.parentRunId, base.id);
+});
+
+test("rejects malformed follow-up lineage", () => {
+  const state = createRunState({ objective: "Bad lineage" });
+  const invalid = {
+    ...state,
+    lineage: {
+      parentRunId: "../escape",
+      rootRunId: state.id,
+      relationship: "forks",
+      prompt: "Bad lineage",
+      createdFrom: "browser"
+    }
+  };
+
+  const result = validateRunState(invalid);
+
+  assert.equal(result.valid, false);
+  assert.match(result.errors.join("\n"), /lineage.parentRunId/);
+  assert.match(result.errors.join("\n"), /lineage.relationship/);
+  assert.match(result.errors.join("\n"), /lineage.createdFrom/);
+});
+
 test("records verification evidence immutably", () => {
   const state = createRunState({ objective: "Verify the loop" });
   const updated = appendEvidence(state, {

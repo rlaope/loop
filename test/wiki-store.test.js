@@ -9,11 +9,13 @@ import { tmpdir } from "node:os";
 import {
   appendEvidence,
   createRunState,
+  createDashboardConfirmationToken,
   deleteWikiNote,
   dashboardActionForRun,
   getDashboardStatus,
   listWikiNotes,
   noteIdForRunState,
+  readRunState,
   readWikiNote,
   renderMarkdownHtml,
   renderRunLogHtml,
@@ -244,6 +246,56 @@ test("links previous notes with the same objective slug", async () => {
   assert.doesNotMatch(note.markdown, /--continues-->/);
 });
 
+test("wiki graph prefers explicit lineage over objective slug fallback", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-wiki-lineage-links-"));
+  const sameSlugFallback = createRunState({
+    objective: "Shared followup objective",
+    now: new Date("2026-06-13T08:00:00.000Z")
+  });
+  const explicitParent = createRunState({
+    objective: "Different parent objective",
+    now: new Date("2026-06-13T08:30:00.000Z")
+  });
+  const child = createRunState({
+    objective: "Shared followup objective",
+    lineage: {
+      parentRunId: explicitParent.id,
+      rootRunId: explicitParent.id,
+      relationship: "continues",
+      prompt: "Shared followup objective",
+      createdFrom: "dashboard"
+    },
+    now: new Date("2026-06-13T09:00:00.000Z")
+  });
+
+  const fallbackPaths = await writeWikiForRunState(sameSlugFallback, {
+    stateDir,
+    now: new Date("2026-06-13T08:01:00.000Z")
+  });
+  const parentPaths = await writeWikiForRunState(explicitParent, {
+    stateDir,
+    now: new Date("2026-06-13T08:31:00.000Z")
+  });
+  const childPaths = await writeWikiForRunState(child, {
+    stateDir,
+    now: new Date("2026-06-13T09:01:00.000Z")
+  });
+  const childNote = await readWikiNote(childPaths.id, { stateDir });
+  const childMemory = JSON.parse(await readFile(childPaths.memoryPath, "utf8"));
+  /** @type {{ edges: Array<{ source: string, target: string, relationship: string }> }} */
+  const graph = JSON.parse(await readFile(childPaths.graphPath, "utf8"));
+  const childEdges = graph.edges.filter((edge) => edge.source === childPaths.id);
+
+  assert.equal(childMemory.graph.links.length, 1);
+  assert.equal(childMemory.graph.links[0].relationship, "continues");
+  assert.equal(childMemory.graph.links[0].title, "Different parent objective");
+  assert.equal(childMemory.lineage.parentRunId, explicitParent.id);
+  assert.equal(childEdges.length, 1);
+  assert.equal(childEdges[0].target, parentPaths.id);
+  assert.notEqual(childEdges[0].target, fallbackPaths.id);
+  assert.match(childNote.markdown, /Different parent objective/);
+});
+
 test("renders markdown notes as readable semantic HTML", () => {
   const html = renderMarkdownHtml([
     "# Darkwear Exhibit",
@@ -312,7 +364,11 @@ test("dashboard links to a separate graph view", async () => {
   assert.match(html, /Second Brain/);
   assert.match(html, /Loop Stack/);
   assert.match(html, /href="\/graph"/);
-  assert.match(html, />Delete</);
+  assert.match(html, />Delete Note</);
+  assert.match(html, /action="\/actions\/add-note"/);
+  assert.match(html, /action="\/actions\/verify-run"/);
+  assert.match(html, /action="\/actions\/follow-up"/);
+  assert.match(html, /action="\/actions\/open-codex"/);
   assert.match(html, /run-stack/);
   assert.doesNotMatch(html, /Read Latest/);
   assert.doesNotMatch(html, /latest-card/);
@@ -450,16 +506,31 @@ test("dashboard server deletes wiki notes by post route", async () => {
     now: new Date("2026-06-13T08:00:00.000Z")
   });
   const port = await getFreePort();
-  const served = await serveWikiDashboard({ stateDir, port });
+  const confirmationSecret = "test-dashboard-secret";
+  const served = await serveWikiDashboard({ stateDir, port, confirmationSecret });
   const paths = await writeWikiForRunState(state, { stateDir, now: new Date("2026-06-13T08:01:00.000Z") });
+  const token = createDashboardConfirmationToken({
+    action: "delete-note",
+    targetId: paths.id,
+    stateDir,
+    secret: confirmationSecret
+  });
 
   try {
-    const response = await fetch(`http://127.0.0.1:${port}/notes/${paths.id}/delete`, {
+    const rejected = await fetch(`http://127.0.0.1:${port}/notes/${paths.id}/delete`, {
       method: "POST",
+      redirect: "manual"
+    });
+    const stillPresent = await listWikiNotes({ stateDir });
+    const response = await fetch(`http://127.0.0.1:${port}/actions/delete-note`, {
+      method: "POST",
+      body: new URLSearchParams({ id: paths.id, confirmationToken: token }),
       redirect: "manual"
     });
     const notes = await listWikiNotes({ stateDir });
 
+    assert.equal(rejected.status, 404);
+    assert.equal(stillPresent.length, 1);
     assert.equal(response.status, 303);
     assert.equal(response.headers.get("location"), "/");
     assert.deepEqual(notes, []);
@@ -467,6 +538,337 @@ test("dashboard server deletes wiki notes by post route", async () => {
     if (served.server) {
       served.server.close();
       await once(served.server, "close");
+    }
+  }
+});
+
+test("dashboard action endpoints add notes and update run state with confirmation", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-wiki-actions-"));
+  const state = createRunState({
+    objective: "Dashboard action objective",
+    now: new Date("2026-06-13T08:00:00.000Z")
+  });
+  const port = await getFreePort();
+  const confirmationSecret = "test-dashboard-actions-secret";
+  await writeRunState(state, { stateDir });
+  const paths = await writeWikiForRunState(state, { stateDir, now: new Date("2026-06-13T08:01:00.000Z") });
+  const served = await serveWikiDashboard({ stateDir, port, confirmationSecret });
+
+  try {
+    const addNote = await fetch(`http://127.0.0.1:${port}/actions/add-note`, {
+      method: "POST",
+      body: new URLSearchParams({
+        targetId: paths.id,
+        runId: state.id,
+        parentId: paths.id,
+        kind: "plan",
+        title: "Dashboard plan",
+        body: "Dashboard-created planning context.",
+        confirmationToken: createDashboardConfirmationToken({
+          action: "add-note",
+          targetId: paths.id,
+          stateDir,
+          secret: confirmationSecret
+        })
+      }),
+      redirect: "manual"
+    });
+    const afterAdd = await listWikiNotes({ stateDir });
+    const verify = await fetch(`http://127.0.0.1:${port}/actions/verify-run`, {
+      method: "POST",
+      body: new URLSearchParams({
+        id: state.id,
+        summary: "Dashboard verification passed.",
+        confirmationToken: createDashboardConfirmationToken({
+          action: "verify-run",
+          targetId: state.id,
+          stateDir,
+          secret: confirmationSecret
+        })
+      }),
+      redirect: "manual"
+    });
+    const afterVerify = await readRunState(state.id, { stateDir });
+    const complete = await fetch(`http://127.0.0.1:${port}/actions/mark-complete`, {
+      method: "POST",
+      body: new URLSearchParams({
+        id: state.id,
+        confirmationToken: createDashboardConfirmationToken({
+          action: "mark-complete",
+          targetId: state.id,
+          stateDir,
+          secret: confirmationSecret
+        })
+      }),
+      redirect: "manual"
+    });
+    const afterComplete = await readRunState(state.id, { stateDir });
+    const deleteRun = await fetch(`http://127.0.0.1:${port}/actions/delete-run`, {
+      method: "POST",
+      body: new URLSearchParams({
+        id: state.id,
+        confirmationToken: createDashboardConfirmationToken({
+          action: "delete-run",
+          targetId: state.id,
+          stateDir,
+          secret: confirmationSecret
+        })
+      }),
+      redirect: "manual"
+    });
+    const afterDelete = await readRunState(state.id, { stateDir });
+
+    assert.equal(addNote.status, 303);
+    assert.equal(afterAdd.length, 2);
+    assert.ok(afterAdd.some((note) => note.title === "Dashboard plan" && note.kind === "plan"));
+    assert.equal(verify.status, 303);
+    assert.equal(afterVerify.ok, true);
+    assert.equal(afterVerify.ok && afterVerify.state.phase, "verify");
+    assert.ok(afterVerify.ok && afterVerify.state.verificationEvidence.some((item) => item.summary === "Dashboard verification passed."));
+    assert.equal(complete.status, 303);
+    assert.equal(afterComplete.ok, true);
+    assert.equal(afterComplete.ok && afterComplete.state.status, "complete");
+    assert.equal(deleteRun.status, 303);
+    assert.equal(afterDelete.ok, false);
+  } finally {
+    if (served.server) {
+      served.server.close();
+      await once(served.server, "close");
+    }
+  }
+});
+
+test("dashboard follow-up and open-codex actions use confirmation and effect adapters", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-wiki-followup-codex-"));
+  const state = {
+    ...createRunState({
+      objective: "Dashboard follow-up objective",
+      now: new Date("2026-06-13T08:00:00.000Z")
+    }),
+    session: {
+      agent: "codex",
+      status: "running",
+      pid: 4321,
+      cwd: "/tmp/dashboard-codex"
+    }
+  };
+  const port = await getFreePort();
+  const confirmationSecret = "test-dashboard-effects-secret";
+  /** @type {Array<{ command: string, args?: string[], cwd?: string | null }>} */
+  const launchedCommands = [];
+  await writeRunState(state, { stateDir });
+  await writeFile(runLogPath({ stateDir, id: state.id }), "session id: 019ec4bd-7118-7443-8d6b-dce6b226eef3\n");
+  await writeWikiForRunState(state, { stateDir, now: new Date("2026-06-13T08:01:00.000Z") });
+  const served = await serveWikiDashboard({
+    stateDir,
+    port,
+    confirmationSecret,
+    launchTerminalCommandImpl: (spec) => {
+      launchedCommands.push(spec);
+      return {
+        pid: 9876,
+        command: "test-terminal",
+        args: [spec.command, ...(spec.args ?? [])],
+        displayCommand: spec.command
+      };
+    }
+  });
+
+  try {
+    const rejected = await fetch(`http://127.0.0.1:${port}/actions/follow-up`, {
+      method: "POST",
+      body: new URLSearchParams({
+        parentRunId: state.id,
+        prompt: "Continue from dashboard",
+        agent: "claudecode"
+      }),
+      redirect: "manual"
+    });
+    const followUp = await fetch(`http://127.0.0.1:${port}/actions/follow-up`, {
+      method: "POST",
+      body: new URLSearchParams({
+        parentRunId: state.id,
+        prompt: "Continue from dashboard",
+        agent: "claudecode",
+        confirmationToken: createDashboardConfirmationToken({
+          action: "follow-up-run",
+          targetId: state.id,
+          stateDir,
+          secret: confirmationSecret
+        })
+      })
+    });
+    const followUpHtml = await followUp.text();
+    const openCodex = await fetch(`http://127.0.0.1:${port}/actions/open-codex`, {
+      method: "POST",
+      body: new URLSearchParams({
+        id: state.id,
+        confirmationToken: createDashboardConfirmationToken({
+          action: "open-codex",
+          targetId: state.id,
+          stateDir,
+          secret: confirmationSecret
+        })
+      })
+    });
+    const codexHtml = await openCodex.text();
+
+    assert.equal(rejected.status, 403);
+    assert.equal(followUp.status, 200);
+    assert.match(followUpHtml, /Follow-up prepared/);
+    assert.match(followUpHtml, /loop run --agent claudecode/);
+    assert.match(followUpHtml, /--parent-run/);
+    assert.match(followUpHtml, /--lineage-source dashboard/);
+    assert.equal(openCodex.status, 200);
+    assert.equal(launchedCommands.length, 1);
+    assert.deepEqual(launchedCommands[0], {
+      command: "codex",
+      args: ["resume", "--include-non-interactive", "019ec4bd-7118-7443-8d6b-dce6b226eef3"],
+      cwd: "/tmp/dashboard-codex"
+    });
+    assert.match(codexHtml, /Codex terminal opened/);
+    assert.match(codexHtml, /codex resume --include-non-interactive/);
+  } finally {
+    if (served.server) {
+      served.server.close();
+      await once(served.server, "close");
+    }
+  }
+});
+
+test("dashboard open-codex action does not launch without a concrete Codex session id", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-wiki-open-codex-no-session-"));
+  const state = {
+    ...createRunState({
+      objective: "Dashboard missing Codex session",
+      now: new Date("2026-06-13T08:00:00.000Z")
+    }),
+    session: {
+      agent: "codex",
+      status: "running",
+      pid: 4321,
+      cwd: "/tmp/dashboard-codex"
+    }
+  };
+  const port = await getFreePort();
+  const confirmationSecret = "test-dashboard-missing-session-secret";
+  let launches = 0;
+  await writeRunState(state, { stateDir });
+  await writeFile(runLogPath({ stateDir, id: state.id }), "codex started without a parseable session id\n");
+  await writeWikiForRunState(state, { stateDir, now: new Date("2026-06-13T08:01:00.000Z") });
+  const served = await serveWikiDashboard({
+    stateDir,
+    port,
+    confirmationSecret,
+    launchTerminalCommandImpl: () => {
+      launches += 1;
+      return { pid: 9876, command: "test-terminal", args: [], displayCommand: "test-terminal" };
+    }
+  });
+
+  try {
+    const openCodex = await fetch(`http://127.0.0.1:${port}/actions/open-codex`, {
+      method: "POST",
+      body: new URLSearchParams({
+        id: state.id,
+        confirmationToken: createDashboardConfirmationToken({
+          action: "open-codex",
+          targetId: state.id,
+          stateDir,
+          secret: confirmationSecret
+        })
+      })
+    });
+    const message = await openCodex.text();
+
+    assert.equal(openCodex.status, 400);
+    assert.equal(launches, 0);
+    assert.match(message, /No Codex session id was found/);
+  } finally {
+    if (served.server) {
+      served.server.close();
+      await once(served.server, "close");
+    }
+  }
+});
+
+test("dashboard confirmation tokens are bound to action target and expiry", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-wiki-token-binding-"));
+  const state = createRunState({
+    objective: "Token binding objective",
+    now: new Date("2026-06-13T08:00:00.000Z")
+  });
+  const port = await getFreePort();
+  const confirmationSecret = "test-dashboard-token-secret";
+  const paths = await writeWikiForRunState(state, { stateDir, now: new Date("2026-06-13T08:01:00.000Z") });
+  const served = await serveWikiDashboard({ stateDir, port, confirmationSecret });
+
+  try {
+    const wrongAction = await fetch(`http://127.0.0.1:${port}/actions/delete-note`, {
+      method: "POST",
+      body: new URLSearchParams({
+        id: paths.id,
+        confirmationToken: createDashboardConfirmationToken({
+          action: "delete-run",
+          targetId: paths.id,
+          stateDir,
+          secret: confirmationSecret
+        })
+      }),
+      redirect: "manual"
+    });
+    const expired = await fetch(`http://127.0.0.1:${port}/actions/delete-note`, {
+      method: "POST",
+      body: new URLSearchParams({
+        id: paths.id,
+        confirmationToken: createDashboardConfirmationToken({
+          action: "delete-note",
+          targetId: paths.id,
+          stateDir,
+          secret: confirmationSecret,
+          ttlMs: -1
+        })
+      }),
+      redirect: "manual"
+    });
+    const notes = await listWikiNotes({ stateDir });
+
+    assert.equal(wrongAction.status, 403);
+    assert.equal(expired.status, 403);
+    assert.equal(notes.length, 1);
+  } finally {
+    if (served.server) {
+      served.server.close();
+      await once(served.server, "close");
+    }
+  }
+});
+
+test("dashboard server persists confirmation secret per state directory", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-wiki-persisted-secret-"));
+  const firstPort = await getFreePort();
+  const secondPort = await getFreePort();
+  let savedSecret = "";
+  const first = await serveWikiDashboard({ stateDir, port: firstPort });
+
+  try {
+    savedSecret = await readFile(join(stateDir, "dashboard-secret"), "utf8");
+    assert.match(savedSecret.trim(), /^[0-9a-f]{64}$/i);
+  } finally {
+    if (first.server) {
+      first.server.close();
+      await once(first.server, "close");
+    }
+  }
+
+  const second = await serveWikiDashboard({ stateDir, port: secondPort });
+  try {
+    const secondSecret = await readFile(join(stateDir, "dashboard-secret"), "utf8");
+    assert.equal(secondSecret, savedSecret);
+  } finally {
+    if (second.server) {
+      second.server.close();
+      await once(second.server, "close");
     }
   }
 });
@@ -506,7 +908,7 @@ test("dashboard keeps attached notes visible when their parent is deleted", asyn
   assert.match(html, /Unattached Notes/);
   assert.match(html, /Orphaned implementation plan/);
   assert.match(html, new RegExp(`href="/notes/${child.id}"`));
-  assert.match(html, new RegExp(`action="/notes/${child.id}/delete"`));
+  assert.match(html, /action="\/actions\/delete-note"/);
 });
 
 test("deletes wiki notes and rebuilds graph index", async () => {

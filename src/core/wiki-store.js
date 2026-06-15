@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 
+import { codexResumeCommand, followLogCommand } from "./terminal-launcher.js";
+
 const DEFAULT_STATE_DIR = ".loop";
 const SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const INDEX_FILE = "index.json";
@@ -12,7 +14,8 @@ const GRAPH_FILE = "graph.json";
  * @typedef {{ target: string, relationship: string, reason: string, title?: string, summary?: string, updatedAt?: string, status?: string, phase?: string, kind?: string }} WikiLink
  * @typedef {{ jsonPath?: string, summaryPath?: string }} WikiRunPaths
  * @typedef {{ agent?: string, status?: string, pid?: number | null, startedAt?: string, endedAt?: string | null, logPath?: string }} WikiSession
- * @typedef {{ id: string, runId?: string, kind: string, parentId?: string, parentTitle?: string, title: string, objective: string, objectiveSlug: string, status: string, phase: string, canonicalNote: string, aiMemory: string, createdAt: string, updatedAt: string, summary: string, tags: string[], links: WikiLink[], tokens: WikiTokenUsage, session?: WikiSession | null }} WikiIndexEntry
+ * @typedef {import("./run-state.js").RunLineage} RunLineage
+ * @typedef {{ id: string, runId?: string, kind: string, parentId?: string, parentTitle?: string, title: string, objective: string, objectiveSlug: string, status: string, phase: string, canonicalNote: string, aiMemory: string, createdAt: string, updatedAt: string, summary: string, tags: string[], links: WikiLink[], tokens: WikiTokenUsage, session?: WikiSession | null, lineage?: RunLineage }} WikiIndexEntry
  * @typedef {{ version: 1, updatedAt: string, notes: WikiIndexEntry[] }} WikiIndex
  */
 
@@ -255,7 +258,8 @@ export async function readWikiIndex({ stateDir = DEFAULT_STATE_DIR } = {}) {
             }))
           : [],
         tokens: normalizeTokens(entry.tokens),
-        session: normalizeSession(entry.session)
+        session: normalizeSession(entry.session),
+        lineage: normalizeLineage(entry.lineage)
       })).filter((entry) => SAFE_ID_PATTERN.test(entry.id))
     };
   } catch (error) {
@@ -310,6 +314,32 @@ function normalizeSession(value) {
     startedAt: typeof value.startedAt === "string" ? value.startedAt : undefined,
     endedAt: typeof value.endedAt === "string" ? value.endedAt : null,
     logPath: typeof value.logPath === "string" ? value.logPath : undefined
+  };
+}
+
+/**
+ * @param {unknown} value
+ * @returns {RunLineage | undefined}
+ */
+function normalizeLineage(value) {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  if (
+    typeof value.parentRunId !== "string" ||
+    typeof value.rootRunId !== "string" ||
+    value.relationship !== "continues" ||
+    typeof value.prompt !== "string" ||
+    (value.createdFrom !== "tui" && value.createdFrom !== "dashboard" && value.createdFrom !== "cli")
+  ) {
+    return undefined;
+  }
+  return {
+    parentRunId: value.parentRunId,
+    rootRunId: value.rootRunId,
+    relationship: "continues",
+    prompt: value.prompt,
+    createdFrom: value.createdFrom
   };
 }
 
@@ -401,6 +431,21 @@ function wikiText(locale) {
         readNote: "노트 읽기",
         viewLog: "로그 보기",
         delete: "삭제",
+        deleteNote: "노트 삭제",
+        deleteRun: "실행 삭제",
+        addNote: "노트 추가",
+        noteTitle: "노트 제목",
+        noteBody: "맥락, 결정, 검증 증거를 기록하세요.",
+        noteKind: "종류",
+        verify: "검증 기록",
+        evidenceSummary: "검증 증거 요약",
+        markComplete: "완료 처리",
+        completeSummary: "완료 근거",
+        followUp: "후속 목표 준비",
+        followUpPrompt: "이 루프의 맥락을 이어받을 다음 목표",
+        agentChoice: "에이전트",
+        openCodex: "Codex 열기",
+        localActions: "로컬 액션",
         attachedNotes: "첨부 노트",
         noAttachedNotes: "첨부 노트가 없습니다.",
         unattachedNotes: "분리된 노트",
@@ -464,6 +509,21 @@ function wikiText(locale) {
         readNote: "Read Note",
         viewLog: "View Log",
         delete: "Delete",
+        deleteNote: "Delete Note",
+        deleteRun: "Delete Run",
+        addNote: "Add Note",
+        noteTitle: "Note title",
+        noteBody: "Record context, decisions, or verification evidence.",
+        noteKind: "Kind",
+        verify: "Record Verification",
+        evidenceSummary: "Verification evidence summary",
+        markComplete: "Mark Complete",
+        completeSummary: "Completion evidence",
+        followUp: "Prepare Follow-up",
+        followUpPrompt: "Next objective that continues this loop",
+        agentChoice: "Agent",
+        openCodex: "Open Codex",
+        localActions: "Local Actions",
         attachedNotes: "Attached Notes",
         noAttachedNotes: "No attached notes.",
         unattachedNotes: "Unattached Notes",
@@ -761,6 +821,22 @@ function relatedNoteTitle(link) {
  */
 function relatedLinks(index, state, id) {
   const locale = localeForState(state);
+  if (state.lineage) {
+    const parent = index.notes.find((note) => note.runId === state.lineage?.parentRunId && note.kind === "run");
+    if (parent) {
+      return [{
+        target: `../user/${parent.id}.md`,
+        relationship: state.lineage.relationship,
+        reason: locale === "ko" ? "명시적인 후속 실행 lineage parent입니다." : "Explicit follow-up lineage parent.",
+        title: parent.title,
+        summary: parent.summary,
+        updatedAt: parent.updatedAt,
+        status: parent.status,
+        phase: parent.phase,
+        kind: parent.kind
+      }];
+    }
+  }
   return index.notes
     .filter((note) => note.id !== id && note.objectiveSlug === state.objectiveSlug && note.kind === "run")
     .slice(0, 5)
@@ -945,6 +1021,7 @@ function buildAiMemory(state, { id, noteRelativePath, markdown, markdownHash, ge
     status: state.status,
     phase: state.phase,
     session,
+    lineage: state.lineage,
     decisions,
     technicalSpec: {
       stack: [],
@@ -1120,6 +1197,7 @@ function buildGraph(index, now) {
       path: note.canonicalNote,
       kind: note.kind,
       parentId: note.parentId,
+      lineage: note.lineage,
       status: note.status,
       tags: note.tags
     })),
@@ -1186,7 +1264,8 @@ export async function writeWikiForRunState(state, { stateDir = DEFAULT_STATE_DIR
     tags: memory.graph.tags,
     links,
     tokens: memory.tokens,
-    session: memory.session
+    session: memory.session,
+    lineage: state.lineage
   };
   const nextIndex = upsertIndexEntry(index, entry, now.toISOString());
   await writeFile(indexPath, `${JSON.stringify(nextIndex, null, 2)}\n`);
@@ -1645,8 +1724,9 @@ function renderGraphSvg(notes) {
 
 /**
  * @param {WikiIndexEntry[]} notes
+ * @param {{ confirmationTokenFor?: (input: { action: string, targetId: string }) => string }} [options]
  */
-export function renderWikiDashboardHtml(notes) {
+export function renderWikiDashboardHtml(notes, { confirmationTokenFor = () => "" } = {}) {
   const locale = localeForNotes(notes);
   const text = wikiText(locale);
   const recent = notes[0];
@@ -1658,6 +1738,88 @@ export function renderWikiDashboardHtml(notes) {
     const key = note.parentId ?? "";
     childrenByParent.set(key, [...(childrenByParent.get(key) ?? []), note]);
   }
+  /**
+   * @param {string} name
+   * @param {string | undefined} value
+   */
+  const hiddenInput = (name, value) => value
+    ? `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`
+    : "";
+  /**
+   * @param {string} action
+   * @param {string} targetId
+   */
+  const tokenInput = (action, targetId) => hiddenInput("confirmationToken", confirmationTokenFor({ action, targetId }));
+  /**
+   * @param {string} id
+   * @param {string} buttonClass
+   * @param {string} label
+   */
+  const deleteNoteForm = (id, buttonClass, label) => `
+              <form method="post" action="/actions/delete-note">
+                ${hiddenInput("id", id)}
+                ${tokenInput("delete-note", id)}
+                <button class="${escapeHtml(buttonClass)}" type="submit">${escapeHtml(label)}</button>
+              </form>`;
+  /**
+   * @param {WikiIndexEntry} runNote
+   */
+  const renderLocalActionPanel = (runNote) => {
+    if (!runNote.runId) {
+      return "";
+    }
+    const kindOptions = ["note", "plan", "verification", "idea", "decision", "reference"]
+      .map((kind) => `<option value="${kind}">${escapeHtml(displayKind(kind, locale))}</option>`)
+      .join("");
+    return `
+          <section class="local-actions-panel" aria-label="${escapeHtml(text.localActions)}">
+            <div class="section-title-row"><h4>${escapeHtml(text.localActions)}</h4><span>${escapeHtml(runNote.runId)}</span></div>
+            <form class="stack-form note-form" method="post" action="/actions/add-note">
+              ${hiddenInput("targetId", runNote.id)}
+              ${hiddenInput("runId", runNote.runId)}
+              ${hiddenInput("parentId", runNote.id)}
+              ${tokenInput("add-note", runNote.id)}
+              <label><span>${escapeHtml(text.noteKind)}</span><select name="kind">${kindOptions}</select></label>
+              <label><span>${escapeHtml(text.noteTitle)}</span><input name="title" autocomplete="off"></label>
+              <textarea name="body" rows="3" placeholder="${escapeHtml(text.noteBody)}"></textarea>
+              <button class="button secondary" type="submit">${escapeHtml(text.addNote)}</button>
+            </form>
+            <form class="stack-form inline-form" method="post" action="/actions/verify-run">
+              ${hiddenInput("id", runNote.runId)}
+              ${tokenInput("verify-run", runNote.runId)}
+              <input name="summary" autocomplete="off" placeholder="${escapeHtml(text.evidenceSummary)}">
+              <button class="button secondary" type="submit">${escapeHtml(text.verify)}</button>
+            </form>
+            <form class="stack-form inline-form" method="post" action="/actions/follow-up">
+              ${hiddenInput("parentRunId", runNote.runId)}
+              ${tokenInput("follow-up-run", runNote.runId)}
+              <select name="agent" aria-label="${escapeHtml(text.agentChoice)}">
+                <option value="codex">codex</option>
+                <option value="claudecode">claudecode</option>
+              </select>
+              <input name="prompt" autocomplete="off" placeholder="${escapeHtml(text.followUpPrompt)}">
+              <button class="button ghost" type="submit">${escapeHtml(text.followUp)}</button>
+            </form>
+            <div class="danger-row">
+              <form method="post" action="/actions/open-codex">
+                ${hiddenInput("id", runNote.runId)}
+                ${tokenInput("open-codex", runNote.runId)}
+                <button class="button ghost" type="submit">${escapeHtml(text.openCodex)}</button>
+              </form>
+              <form method="post" action="/actions/mark-complete">
+                ${hiddenInput("id", runNote.runId)}
+                ${hiddenInput("summary", locale === "ko" ? "Loop Wiki 대시보드에서 완료 처리했습니다." : "Marked complete from the Loop Wiki dashboard.")}
+                ${tokenInput("mark-complete", runNote.runId)}
+                <button class="button secondary" type="submit">${escapeHtml(text.markComplete)}</button>
+              </form>
+              <form method="post" action="/actions/delete-run">
+                ${hiddenInput("id", runNote.runId)}
+                ${tokenInput("delete-run", runNote.runId)}
+                <button class="button danger" type="submit">${escapeHtml(text.deleteRun)}</button>
+              </form>
+            </div>
+          </section>`;
+  };
   /** @type {Set<string>} */
   const renderedAttachedIds = new Set();
   /**
@@ -1682,9 +1844,7 @@ export function renderWikiDashboardHtml(notes) {
             </div>
             <div class="inline-actions">
               <a class="text-link" href="/notes/${encodeURIComponent(child.id)}">${escapeHtml(text.read)}</a>
-              <form method="post" action="/notes/${encodeURIComponent(child.id)}/delete">
-                <button class="text-danger" type="submit">${escapeHtml(text.delete)}</button>
-              </form>
+              ${deleteNoteForm(child.id, "text-danger", text.delete)}
             </div>
           </article>`).join("");
   };
@@ -1710,9 +1870,7 @@ export function renderWikiDashboardHtml(notes) {
           <div class="card-actions">
             <a class="button secondary" href="/notes/${encodeURIComponent(runNote.id)}">${escapeHtml(text.readNote)}</a>
             ${logLink}
-            <form method="post" action="/notes/${encodeURIComponent(runNote.id)}/delete">
-              <button class="button danger" type="submit">${escapeHtml(text.delete)}</button>
-            </form>
+            ${deleteNoteForm(runNote.id, "button danger", text.deleteNote)}
           </div>
         </div>
         <div class="attached-list">
@@ -1721,6 +1879,7 @@ export function renderWikiDashboardHtml(notes) {
             <span>${children.length}</span>
           </div>
           ${childRows}
+          ${renderLocalActionPanel(runNote)}
         </div>
       </article>`;
   }).join("\n");
@@ -1795,6 +1954,17 @@ export function renderWikiDashboardHtml(notes) {
     .attached-note { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: 12px; border: 1px solid #25262c; border-radius: 8px; background: #101116; }
     .attached-note h4 { margin-top: 5px; font-size: 14px; }
     .attached-note p { margin-top: 4px; font-size: 13px; }
+    .local-actions-panel { display: grid; gap: 10px; margin-top: 2px; padding-top: 12px; border-top: 1px solid var(--line); }
+    .stack-form { display: grid; gap: 8px; }
+    .stack-form label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; font-weight: 800; }
+    .inline-form { grid-template-columns: minmax(120px, 1fr) auto; align-items: end; }
+    .inline-form select { min-width: 118px; }
+    input, textarea, select { width: 100%; border: 1px solid var(--line); border-radius: 7px; background: #08090d; color: var(--ink); font: inherit; }
+    input, select { min-height: 36px; padding: 7px 10px; }
+    textarea { min-height: 78px; padding: 9px 10px; resize: vertical; }
+    .note-form { grid-template-columns: minmax(100px, 140px) minmax(0, 1fr); }
+    .note-form textarea, .note-form button { grid-column: 1 / -1; }
+    .danger-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     .note-card-header, .note-row-meta, .section-title-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; }
     .section-title-row { justify-content: space-between; color: var(--ink); }
     .section-title-row span { color: var(--muted); }
@@ -1816,7 +1986,7 @@ export function renderWikiDashboardHtml(notes) {
     .muted { color: var(--muted); }
     .small { font-size: 13px; }
     @media (max-width: 980px) { .overview-grid { grid-template-columns: 1fr repeat(3, max-content); } .run-stack { grid-template-columns: 1fr; } .run-main { border-right: 0; border-bottom: 1px solid var(--line); } }
-    @media (max-width: 760px) { header { padding: 16px; } main { padding: 14px; } .header-row { display: grid; } .actions { justify-content: flex-start; } .overview-grid { grid-template-columns: 1fr 1fr 1fr; } .status-card { grid-column: 1 / -1; } .attached-note { grid-template-columns: 1fr; } }
+    @media (max-width: 760px) { header { padding: 16px; } main { padding: 14px; } .header-row { display: grid; } .actions { justify-content: flex-start; } .overview-grid { grid-template-columns: 1fr 1fr 1fr; } .status-card { grid-column: 1 / -1; } .attached-note, .inline-form, .note-form { grid-template-columns: 1fr; } .note-form textarea, .note-form button { grid-column: auto; } }
   </style>
 </head>
 <body>
@@ -1924,16 +2094,18 @@ export function renderWikiGraphHtml(notes) {
 
 /**
  * @param {string} markdown
- * @param {{ noteId?: string }} [options]
+ * @param {{ noteId?: string, confirmationTokenFor?: (input: { action: string, targetId: string }) => string }} [options]
  */
-export function renderMarkdownHtml(markdown, { noteId } = {}) {
+export function renderMarkdownHtml(markdown, { noteId, confirmationTokenFor = () => "" } = {}) {
   const locale = hasHangul(markdown) ? "ko" : "en";
   const text = wikiText(locale);
   const toolbar = noteId
     ? `<nav class="toolbar" aria-label="Note actions">
         <a class="button" href="/">${escapeHtml(text.backToNotes)}</a>
-        <form method="post" action="/notes/${encodeURIComponent(noteId)}/delete">
-          <button class="button danger" type="submit">${escapeHtml(text.delete)}</button>
+        <form method="post" action="/actions/delete-note">
+          <input type="hidden" name="id" value="${escapeHtml(noteId)}">
+          <input type="hidden" name="confirmationToken" value="${escapeHtml(confirmationTokenFor({ action: "delete-note", targetId: noteId }))}">
+          <button class="button danger" type="submit">${escapeHtml(text.deleteNote)}</button>
         </form>
       </nav>`
     : `<nav class="toolbar" aria-label="Note actions"><a class="button" href="/">${escapeHtml(text.backToNotes)}</a></nav>`;
@@ -1980,62 +2152,6 @@ export function renderMarkdownHtml(markdown, { noteId } = {}) {
  */
 function rawSessionFromState(state) {
   return isRecord(state) && isRecord(state.session) ? state.session : null;
-}
-
-/** @param {string} value */
-function shellQuote(value) {
-  if (/^[A-Za-z0-9_/:=.,@%+-]+$/.test(value)) {
-    return value;
-  }
-  return `'${value.replace(/'/g, "'\\''")}'`;
-}
-
-/** @param {string[]} args */
-function shellCommand(args) {
-  return args.map(shellQuote).join(" ");
-}
-
-/**
- * @param {string} cwd
- * @param {string} command
- */
-function commandInCwd(cwd, command) {
-  return `cd ${shellQuote(cwd)} && ${command}`;
-}
-
-/**
- * @param {string} id
- * @param {string | undefined} stateDir
- */
-function followLogCommand(id, stateDir) {
-  const args = ["loop", "logs", id, "--follow"];
-  if (stateDir && stateDir !== ".loop") {
-    args.push("--state-dir", stateDir);
-  }
-  return shellCommand(args);
-}
-
-/** @param {string} log */
-function codexSessionIdFromLog(log) {
-  return log.match(/\bsession id:\s*([0-9a-f]{8}-[0-9a-f-]{13,})/i)?.[1] ?? null;
-}
-
-/**
- * @param {unknown} state
- * @param {string} log
- */
-function codexResumeCommand(state, log) {
-  const session = rawSessionFromState(state);
-  const agent = typeof session?.agent === "string" ? session.agent : undefined;
-  if (!session || agent !== "codex") {
-    return null;
-  }
-  const codexSessionId = codexSessionIdFromLog(log);
-  const command = codexSessionId
-    ? shellCommand(["codex", "resume", "--include-non-interactive", codexSessionId])
-    : shellCommand(["codex", "resume", "--last", "--include-non-interactive"]);
-  const cwd = typeof session.cwd === "string" ? session.cwd : undefined;
-  return cwd ? commandInCwd(cwd, command) : command;
 }
 
 /** @param {unknown} value */

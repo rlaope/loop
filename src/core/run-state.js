@@ -48,6 +48,15 @@ function assertBudgetNumber(name, value, { positive = false } = {}) {
  */
 
 /**
+ * @typedef {object} RunLineage
+ * @property {string} parentRunId
+ * @property {string} rootRunId
+ * @property {"continues"} relationship
+ * @property {string} prompt
+ * @property {"tui" | "dashboard" | "cli"} createdFrom
+ */
+
+/**
  * @typedef {object} LoopRunState
  * @property {1} schemaVersion
  * @property {string} id
@@ -60,6 +69,7 @@ function assertBudgetNumber(name, value, { positive = false } = {}) {
  * @property {VerificationEvidence[]} verificationEvidence
  * @property {ApprovalState} approvals
  * @property {{ kind: string, estimatedTokens: number, attempts: number, recordedAt: string }[]} budgetActivities
+ * @property {RunLineage} [lineage]
  * @property {string} nextAction
  * @property {string} createdAt
  * @property {string} updatedAt
@@ -86,6 +96,7 @@ export function slugifyObjective(objective) {
  * @param {Partial<LoopBudget>} [input.budget]
  * @param {{ description?: string }} [input.stopCondition]
  * @param {Partial<ApprovalState>} [input.approvals]
+ * @param {RunLineage} [input.lineage]
  * @param {Date} [input.now]
  * @returns {LoopRunState}
  */
@@ -94,6 +105,7 @@ export function createRunState({
   budget = {},
   stopCondition = {},
   approvals = {},
+  lineage,
   now = new Date()
 }) {
   if (!objective || !objective.trim()) {
@@ -138,6 +150,7 @@ export function createRunState({
       approvalExpiresAt: approvals.approvalExpiresAt ?? null
     },
     budgetActivities: [],
+    ...(lineage ? { lineage } : {}),
     nextAction: "plan",
     createdAt: timestamp,
     updatedAt: timestamp

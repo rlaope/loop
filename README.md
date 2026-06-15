@@ -58,8 +58,13 @@ Loop is built around six working components:
 - A dry-run CLI path that writes state without changing source files.
 - A `loop run` command that can hand an objective to Codex or Claude Code after
   agent selection and optional goal clarification.
+- A no-argument `loop` Agent Console for inspecting runs, wiki notes, log
+  tails, agent choice, follow-up intent, and Codex resume actions from a TUI.
 - `loop wiki` commands for listing, reading, opening, serving, deleting, and
   adding local second-brain notes.
+- A localhost-only Loop Wiki dashboard with graph view, markdown note reading,
+  live log pages, token-confirmed local actions, follow-up command preparation,
+  and a button to open Codex in a separate terminal when a Codex session exists.
 
 ## Quickstart
 
@@ -94,6 +99,15 @@ You can skip the picker by passing the agent explicitly:
 loop run --agent codex "Build a darkwear luxury exhibition site"
 loop run --agent claudecode "Build a darkwear luxury exhibition site"
 ```
+
+After at least one run exists, typing only `loop` in an interactive terminal
+opens the local Agent Console TUI. Use it to select a run, read wiki context,
+tail logs, add notes, record verification, mark a run complete, prepare a
+follow-up objective, open the dashboard, or open/resume Codex in a new terminal
+tab when a concrete Codex session id has been recorded. Follow-up commands
+include `--parent-run` lineage so the next loop remains connected to the
+previous run. In non-interactive shells, no-argument `loop` prints guidance
+instead of waiting for input.
 
 If you want to try Loop without installing it first:
 
@@ -151,10 +165,18 @@ loop wiki
 `loop wiki` starts and opens a localhost-only dashboard for `.loop/wiki`. The
 main run note under `.loop/wiki/user` is canonical for the loop session; AI
 memory, index, and graph files are derived from the local wiki. `loop run` does
-not start the dashboard in
-non-interactive automation unless `--wiki-dashboard` is passed. Most users can
-ignore that flag and open the dashboard later with `loop wiki`. The dashboard
-also includes note delete buttons and links from each note to the run log.
+not start the dashboard in non-interactive automation unless `--wiki-dashboard`
+is passed. Most users can ignore that flag and open the dashboard later with
+`loop wiki`.
+
+The dashboard is also a local action surface. Each run stack can add attached
+notes, record verification, mark the run complete, prepare a follow-up command
+with a chosen agent, delete run or note artifacts, open the graph view, and
+open Codex in a new terminal when a Codex session id is available. Mutating or
+external actions are protected by server-issued confirmation tokens bound to
+the local state directory, action, target, and expiry. The dashboard secret is
+stored under the local state directory so a browser tab does not lose valid
+actions just because the localhost server restarted.
 
 A loop is not limited to one markdown file. The run note is the parent context,
 and you can attach multiple implementation plans, verification findings,

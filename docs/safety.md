@@ -67,6 +67,13 @@ Loop Wiki is local-first:
 - Exact token usage stays `unknown` unless an agent reports it directly.
 - The dashboard binds to localhost only and does not start in non-interactive
   `loop run` unless `--wiki-dashboard` is explicit.
+- Dashboard write/external actions require server-issued confirmation tokens
+  bound to the action, target id, state directory, and expiry.
+- The dashboard confirmation secret is persisted inside the local state
+  directory with file mode `0600`; deleting that file invalidates existing
+  dashboard action tokens.
+- The no-argument Agent Console TUI can prepare local actions, but dangerous
+  actions still pass through the shared confirmation model.
 - After a run passes the policy gate, wiki generation is part of CLI success.
   If `.loop/wiki` cannot be written, the command exits with code 6 after
   preserving the durable `.loop/runs` state.
