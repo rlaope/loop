@@ -43,7 +43,9 @@
   "scripts": {
     "lint": "node scripts/lint.mjs",
     "test": "node --test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify:package": "npm pack --dry-run --json | node scripts/verify-package.mjs",
+    "verify": "npm run lint && npm run typecheck && npm test && npm run verify:package"
   },
   "keywords": [
     "ai",

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
 import { join, resolve } from "node:path";
@@ -237,6 +237,8 @@ test("manifest capability matches explicit CLI surfaces", async () => {
   assert.match(help, /--dry-run/);
   assert.match(help, /loop run --agent codex/);
   assert.match(help, /loop run --agent claudecode/);
+  assert.match(help, /loop doctor/);
+  assert.match(help, /loop demo/);
   assert.match(help, /asks clarifying questions/);
 });
 
@@ -252,6 +254,55 @@ test("CLI prints help and package version", async () => {
   assert.match(shortHelp, /Usage:/);
   assert.equal(version.trim(), packageJson.version);
   assert.equal(shortVersion.trim(), packageJson.version);
+});
+
+test("CLI doctor reports local readiness without requiring optional agents", async () => {
+  const result = spawnSync(
+    process.execPath,
+    ["bin/loop.js", "doctor", "--expected-root", process.cwd()],
+    { encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /Loop Doctor/);
+  assert.match(result.stdout, /Status: ready/);
+  assert.match(result.stdout, /\[pass\] Node\.js runtime/);
+  assert.match(result.stdout, /\[pass\] git CLI/);
+  assert.match(result.stdout, /\[pass\] repo boundary/);
+  assert.match(result.stdout, /Codex CLI/);
+  assert.match(result.stdout, /Claude Code CLI/);
+  assert.match(result.stdout, /npm run verify/);
+});
+
+test("CLI doctor fails explicit repo-boundary mismatches", async () => {
+  const wrongRoot = await mkdtemp(join(tmpdir(), "loop-wrong-root-"));
+  const result = spawnSync(
+    process.execPath,
+    ["bin/loop.js", "doctor", "--expected-root", wrongRoot],
+    { encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /Loop Doctor/);
+  assert.match(result.stdout, /\[fail\] repo boundary/);
+  assert.match(result.stdout, /git root mismatch/);
+});
+
+test("CLI demo prints workflows without writing local state", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "loop-demo-"));
+  const result = spawnSync(
+    process.execPath,
+    [resolve("bin/loop.js"), "demo"],
+    { cwd, encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /Loop Demo/);
+  assert.match(result.stdout, /darkwear luxury exhibition/i);
+  assert.match(result.stdout, /loop doctor/);
+  assert.match(result.stdout, /loop wiki/);
+  assert.match(result.stdout, /loop --dry-run/);
+  assert.equal(existsSync(join(cwd, ".loop")), false);
 });
 
 test("CLI accepts equals-style option values", async () => {

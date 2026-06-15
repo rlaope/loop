@@ -6,6 +6,16 @@ and a prototype `loop run` surface for Codex and Claude Code. Rich automation,
 native command adapters, external sync, and hosted knowledge storage remain
 future work.
 
+## Public Alpha Readiness
+
+- Keep `loop doctor` read-only and local-only so first-time users can inspect
+  Node.js, git, repo-boundary, package, and optional agent CLI readiness before
+  launching a loop.
+- Keep `loop demo` as a read-only command catalog. It must not write `.loop`,
+  launch agents, start dashboards, or make network calls.
+- Keep `npm run verify` as the contributor and CI quality gate for lint,
+  typecheck, tests, and package-content validation.
+
 ## Claude Code Adapter
 
 - Harden the `loop run --agent claudecode` prototype with parity tests against
@@ -47,3 +57,6 @@ future work.
 - A write-capable loop must fail closed on unknown policy modes, missing
   approvals, unsafe worktree state, missing repo-boundary evidence, and
   exhausted budgets.
+- The public alpha CLI must expose `loop doctor`, `loop demo`, `loop --help`,
+  `loop --version`, `loop status`, `loop runs`, `loop logs`, and `loop wiki`
+  with matching README examples and local tests.

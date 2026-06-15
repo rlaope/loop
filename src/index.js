@@ -20,6 +20,8 @@ export {
 } from "./core/actions.js";
 export { evaluateBudget, recordBudgetActivity } from "./core/budget.js";
 export { scriptPathFromImportMetaUrl, startDetachedWikiDashboard } from "./core/dashboard-process.js";
+export { demoWorkflows, renderDemoGuide } from "./core/demo.js";
+export { MIN_NODE_MAJOR, doctorExitCode, renderDoctorReport, runDoctorChecks } from "./core/doctor.js";
 export { hasActiveApproval, requireWriteApproval } from "./core/approval.js";
 export { checkIsolationDecision, checkRepoBoundary } from "./core/preflight.js";
 export { evaluatePolicyGate } from "./core/policy.js";
@@ -101,6 +103,8 @@ export function printHelp(stream) {
   stream.write(`  loop status\n`);
   stream.write(`  loop runs [delete <run-id>]\n`);
   stream.write(`  loop logs [run-id] [--follow]\n`);
+  stream.write(`  loop doctor [--expected-root <path>] [--expected-remote <url>]\n`);
+  stream.write(`  loop demo\n`);
   stream.write(`  loop wiki [list|read <id>|open <id>|delete <id>|serve]\n`);
   stream.write(`  loop wiki add --kind plan --title "<title>" --body "<note>" [--run <run-id>]\n`);
   stream.write(`  loop --dry-run --objective "<objective>" [--state-dir .loop]\n`);
@@ -135,6 +139,8 @@ export function printHelp(stream) {
   stream.write(`  --no-interview   Skip ambiguity interview for automation or tests.\n`);
   stream.write(`\n`);
   stream.write(`No-argument loop opens the local Agent Console TUI in an interactive terminal.\n`);
+  stream.write(`Doctor mode checks local readiness without writing state or launching agents.\n`);
+  stream.write(`Demo mode prints example workflows without writing state, starting services, or launching agents.\n`);
   stream.write(`Dry-run mode writes durable Loop state and local wiki artifacts only.\n`);
   stream.write(`Run mode records state, creates a local git boundary when needed, asks clarifying questions, then launches the selected agent.\n`);
   stream.write(`Wiki mode reads local .loop/wiki notes and opens a localhost dashboard with graph, note, log, follow-up, and Codex-open controls.\n`);

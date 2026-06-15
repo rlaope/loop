@@ -16,6 +16,7 @@ import {
   dashboardUrl,
   deleteRunState,
   deleteWikiNote,
+  doctorExitCode,
   getDashboardStatus,
   evaluatePolicyGate,
   listRunStates,
@@ -27,9 +28,12 @@ import {
   readRunState,
   readWikiNote,
   recordBudgetActivity,
+  renderDemoGuide,
+  renderDoctorReport,
   renderWikiList,
   runLogPath,
   runAgentProcess,
+  runDoctorChecks,
   runLoopTui,
   scriptPathFromImportMetaUrl,
   serveWikiDashboard,
@@ -44,7 +48,7 @@ import {
 } from "../src/index.js";
 
 const rawArgs = process.argv.slice(2);
-const knownCommands = new Set(["run", "wiki", "status", "runs", "logs"]);
+const knownCommands = new Set(["run", "wiki", "status", "runs", "logs", "doctor", "demo"]);
 const command = knownCommands.has(rawArgs[0]) ? rawArgs[0] : undefined;
 const args = command ? rawArgs.slice(1) : rawArgs;
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
@@ -1015,6 +1019,28 @@ if (command === "status" || command === "runs" || command === "logs") {
 
 if (command === "wiki") {
   await handleWikiCommand();
+}
+
+if (command === "doctor") {
+  try {
+    const result = runDoctorChecks({
+      cwd: process.cwd(),
+      packageJson,
+      expectedRoot: valueFor("--expected-root"),
+      expectedRemote: valueFor("--expected-remote")
+    });
+    process.stdout.write(renderDoctorReport(result));
+    process.exit(doctorExitCode(result));
+  } catch (error) {
+    process.stderr.write(`${errorMessage(error)}\n\n`);
+    printHelp(process.stderr);
+    process.exit(1);
+  }
+}
+
+if (command === "demo") {
+  process.stdout.write(renderDemoGuide());
+  process.exit(0);
 }
 
 let objective;

@@ -4,10 +4,7 @@
 
 ## Verification
 
-- [ ] `npm run lint`
-- [ ] `npm run typecheck`
-- [ ] `npm test`
-- [ ] `npm pack --dry-run --json`
+- [ ] `npm run verify`
 
 ## Loop Safety Checklist
 

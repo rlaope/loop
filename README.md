@@ -73,6 +73,8 @@ Install Loop once:
 ```sh
 npm install -g github:rlaope/loop
 loop --version
+loop doctor
+loop demo
 ```
 
 Create or enter the project you want the coding agent to work on:
@@ -114,6 +116,12 @@ If you want to try Loop without installing it first:
 ```sh
 npm exec --yes --package github:rlaope/loop -- loop "Build a darkwear luxury exhibition site"
 ```
+
+Before a first real run, `loop doctor` checks the local Node.js, git, package,
+repo-boundary, and optional agent CLI readiness without writing `.loop`,
+launching agents, starting the dashboard, or calling the network. `loop demo`
+prints a small command catalog for common first-run, explicit-agent, and
+dry-run follow-up workflows; it is also read-only.
 
 If Loop says the git root does not match, you probably passed an explicit
 `--expected-root` that does not match the current project. Run Loop from the
@@ -201,9 +209,7 @@ To verify the package:
 
 ```sh
 npm install
-npm test
-npm run lint
-npm run typecheck
+npm run verify
 ```
 
 After the package is published to npm, the shorter registry form will be:
@@ -252,9 +258,7 @@ observable and bounded.
 
 ```sh
 npm install
-npm test
-npm run lint
-npm run typecheck
+npm run verify
 ```
 
 Build the loop, stay the engineer.
