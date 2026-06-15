@@ -9,9 +9,7 @@ small, reviewable, and safety-first.
 
 ```sh
 npm install
-npm test
-npm run lint
-npm run typecheck
+npm run verify
 ```
 
 ## Pull Requests

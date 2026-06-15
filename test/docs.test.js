@@ -2,6 +2,23 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
+test("package exposes a single verify gate for local and CI checks", async () => {
+  const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+  const ci = await readFile(".github/workflows/ci.yml", "utf8");
+  const readme = await readFile("README.md", "utf8");
+
+  assert.equal(typeof packageJson.scripts.verify, "string");
+  assert.equal(typeof packageJson.scripts["verify:package"], "string");
+  assert.match(packageJson.scripts.verify, /npm run lint/);
+  assert.match(packageJson.scripts.verify, /npm run typecheck/);
+  assert.match(packageJson.scripts.verify, /npm test/);
+  assert.match(packageJson.scripts.verify, /npm run verify:package/);
+  assert.match(ci, /npm run verify/);
+  assert.match(readme, /loop doctor/);
+  assert.match(readme, /loop demo/);
+  assert.match(readme, /npm run verify/);
+});
+
 test("README links the core documentation set", async () => {
   const readme = await readFile("README.md", "utf8");
 
