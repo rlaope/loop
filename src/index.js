@@ -153,7 +153,7 @@ export function printHelp(stream) {
   stream.write(`  --no-interview   Skip ambiguity interview for automation or tests.\n`);
   stream.write(`  --no-notify      Disable desktop notifications for this run.\n`);
   stream.write(`\n`);
-  stream.write(`No-argument loop opens the local Agent Console TUI in an interactive terminal.\n`);
+  stream.write(`No-argument loop opens the local Prompt Console TUI in an interactive terminal.\n`);
   stream.write(`Direct loop "prompt" opens a processing TUI; add --just-run or use loop run "prompt" for the explicit CLI stream.\n`);
   stream.write(`Doctor mode checks local readiness without writing state or launching agents.\n`);
   stream.write(`Demo mode prints example workflows without writing state, starting services, or launching agents.\n`);

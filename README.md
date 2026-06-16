@@ -60,8 +60,9 @@ Loop is built around six working components:
   agent selection and optional goal clarification.
 - Best-effort desktop notifications on macOS, Windows, and Linux when a run
   starts, needs human attention, or finishes and needs review.
-- A no-argument `loop` Agent Console for inspecting runs, wiki notes, log
-  tails, agent choice, follow-up intent, and Codex resume actions from a TUI.
+- A no-argument `loop` Prompt Console for entering objectives, inspecting runs,
+  reading wiki notes, tailing logs, switching agent choice, preparing follow-up
+  intent, and opening Codex resume actions from a TUI.
 - `loop wiki` commands for listing, reading, opening, serving, deleting, and
   adding local second-brain notes.
 - A localhost-only Loop Wiki dashboard with graph view, markdown note reading,
@@ -92,10 +93,11 @@ repository there first. That keeps write-capable agent work bounded to the
 folder you started from, even when the folder lives inside a larger parent repo.
 
 `loop "prompt"` asks you to type `1` or `2` to choose the prototype agent, then
-opens the Agent Console processing view in the same terminal. The agent output
-is captured in the run log while the TUI shows the current run state, next
-action, wiki count, graph count, and live log tail. When the agent exits, Loop
-finishes the state/wiki update and leaves you in the normal Agent Console.
+opens the Prompt Console processing view in the same terminal. The agent output
+is captured in the run log while the TUI shows the current run state, selected
+agent, wiki dashboard status, next action, graph count, and live log tail. When
+the agent exits, Loop finishes the state/wiki update and leaves you in the
+normal Prompt Console.
 
 Use `loop run "prompt"` when you want the older explicit CLI stream that prints
 agent output and returns JSON for scripts. If you like the short command but
@@ -113,9 +115,10 @@ loop --agent codex "Build a darkwear luxury exhibition site" --just-run
 ```
 
 After at least one run exists, typing only `loop` in an interactive terminal
-opens the local Agent Console TUI. Use it to select a run, read wiki context,
-tail logs, add notes, record verification, mark a run complete, prepare a
-follow-up objective, open the dashboard, or open/resume Codex in a new terminal
+opens the local Prompt Console TUI. Use the prompt input to stage a new
+objective or connected follow-up, and use the keyboard action buttons to select
+a run, read wiki context, tail logs, add notes, record verification, mark a run
+complete, open the dashboard, or open/resume Codex in a new terminal
 tab when a concrete Codex session id has been recorded. Follow-up commands
 include `--parent-run` lineage so the next loop remains connected to the
 previous run. In non-interactive shells, no-argument `loop` prints guidance

@@ -12,7 +12,7 @@ import {
   readGraphAction,
   readRunLogTailAction
 } from "./actions.js";
-import { dashboardUrl, serveWikiDashboard } from "./wiki-dashboard.js";
+import { dashboardUrl, getDashboardStatus, serveWikiDashboard } from "./wiki-dashboard.js";
 import { openTarget } from "./open-target.js";
 import {
   codexCommandFromOpenEffect,
@@ -20,23 +20,17 @@ import {
   launchTerminalCommand,
   loopRunCommand
 } from "./terminal-launcher.js";
+import {
+  colorize,
+  normalizeTuiAction,
+  renderTuiHome,
+  renderTuiLogo,
+  renderTuiProcessing,
+  shouldUseTuiColor,
+  TUI_PROMPT_COLOR
+} from "./tui-render.js";
 
-const RED = "\x1b[38;5;167m";
-const DIM_RED = "\x1b[38;5;88m";
-const RESET = "\x1b[0m";
-const LOOP_LOGO_LINES = [
-  " _      ___   ___  ____ ",
-  "| |    / _ \\ / _ \\|  _ \\",
-  "| |   | | | | | | | |_) |",
-  "| |___| |_| | |_| |  __/",
-  "|_____|\\___/ \\___/|_|",
-  "        .----->----.",
-  "     .-'           '-.",
-  "   .'   plan   act    '.",
-  "   \\    verify stop    /",
-  "     '-.           .-'",
-  "        '----<----'"
-];
+export { renderTuiHome, renderTuiProcessing } from "./tui-render.js";
 
 /**
  * @param {{ argCount: number, stdinTTY: boolean, stdoutTTY: boolean }} input
@@ -59,47 +53,27 @@ export function directPromptTuiDispatch({ hasCommand, stdinTTY, stdoutTTY, justR
 }
 
 /**
- * @param {string} value
- * @param {number} maxLength
+ * @param {{ stateDir?: string, selectedRunId?: string | null, agent?: "codex" | "claudecode", getDashboardStatusImpl?: typeof getDashboardStatus }} [options]
  */
-function truncate(value, maxLength) {
-  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 3)}...`;
-}
-
-/**
- * @param {{ color?: boolean }} [options]
- */
-function renderTuiLogo({ color = false } = {}) {
-  if (!color) {
-    return LOOP_LOGO_LINES.join("\n");
-  }
-  return LOOP_LOGO_LINES.map((line, index) => {
-    const tone = index < 5 ? RED : DIM_RED;
-    return `${tone}${line}${RESET}`;
-  }).join("\n");
-}
-
-/**
- * @param {{ isTTY?: boolean, env?: NodeJS.ProcessEnv }} input
- */
-function shouldUseTuiColor({ isTTY = false, env = process.env }) {
-  if (!isTTY) {
-    return false;
-  }
-  if (env.NO_COLOR !== undefined || env.FORCE_COLOR === "0" || env.TERM === "dumb") {
-    return false;
-  }
-  return true;
-}
-
-/**
- * @param {{ stateDir?: string, selectedRunId?: string | null, agent?: "codex" | "claudecode" }} [options]
- */
-async function loadSnapshot({ stateDir = ".loop", selectedRunId = null, agent = "codex" } = {}) {
-  const [runs, notes, graph] = await Promise.all([
+async function loadSnapshot({
+  stateDir = ".loop",
+  selectedRunId = null,
+  agent = "codex",
+  getDashboardStatusImpl = getDashboardStatus
+} = {}) {
+  const dashboardProbe = getDashboardStatusImpl({ timeoutMs: 80 })
+    .then((status) => {
+      if (!status.running && status.occupied) {
+        return { running: false, occupied: false, unknown: true };
+      }
+      return { ...status, unknown: false };
+    })
+    .catch(() => ({ running: false, occupied: false, unknown: true }));
+  const [runs, notes, graph, dashboardStatus] = await Promise.all([
     listRunsAction({ stateDir }),
     listWikiNotesAction({ stateDir }),
-    readGraphAction({ stateDir })
+    readGraphAction({ stateDir }),
+    dashboardProbe
   ]);
   const runList = runs.runs;
   const selected = runList.find((run) => run.id === selectedRunId) ?? runList[0] ?? null;
@@ -109,100 +83,14 @@ async function loadSnapshot({ stateDir = ".loop", selectedRunId = null, agent = 
     runs: runList,
     notes: notes.notes,
     graph: graph.graph,
+    dashboard: {
+      ...dashboardStatus,
+      url: dashboardUrl()
+    },
+    notice: "",
     selectedRunId: selected?.id ?? null,
     selectedRun: selected
   };
-}
-
-/**
- * @param {string | undefined} value
- * @param {string} fallback
- */
-function displayValue(value, fallback = "unknown") {
-  return value && value.trim() ? value : fallback;
-}
-
-/**
- * @param {Awaited<ReturnType<typeof loadSnapshot>>} snapshot
- */
-export function renderTuiHome(snapshot) {
-  const runRows = snapshot.runs.length === 0
-    ? "  No Loop runs yet. Start with: loop run \"your objective\""
-    : snapshot.runs.slice(0, 8).map((run, index) => {
-        const marker = run.id === snapshot.selectedRunId ? "*" : " ";
-        return `${marker} ${index + 1}. ${run.status}/${run.phase} ${truncate(run.objective, 72)}\n     ${run.id}`;
-      }).join("\n");
-  const selected = snapshot.selectedRun
-    ? [
-        `Selected: ${snapshot.selectedRun.id}`,
-        `Status: ${snapshot.selectedRun.status}/${snapshot.selectedRun.phase}`,
-        `Next: ${snapshot.selectedRun.nextAction}`
-      ].join("\n")
-    : "Selected: none";
-  return [
-    "Loop Agent Console",
-    "==================",
-    `State: ${snapshot.stateDir}`,
-    `Agent: ${snapshot.agent}`,
-    "",
-    "Runs",
-    runRows,
-    "",
-    selected,
-    "",
-    `Wiki: ${snapshot.notes.length} notes | Graph: ${snapshot.graph.nodes.length} nodes, ${snapshot.graph.edges.length} edges`,
-    "",
-    "Commands",
-    "  1-9 select run    logs show tail       wiki list notes",
-    "  note add note     verify add evidence  complete mark complete",
-    "  follow prepare    codex open terminal  dashboard start/open wiki",
-    "  agent switch      refresh              q quit",
-    ""
-  ].join("\n");
-}
-
-/**
- * @param {Awaited<ReturnType<typeof loadSnapshot>>} snapshot
- * @param {{ runId: string, frame?: number, logTail?: string }} options
- */
-export function renderTuiProcessing(snapshot, {
-  runId,
-  frame = 0,
-  logTail = ""
-}) {
-  const selected = snapshot.selectedRun;
-  const spinner = ["|", "/", "-", "\\"][frame % 4];
-  const session = selected && typeof selected.session === "object" && selected.session !== null
-    ? /** @type {Record<string, unknown>} */ (selected.session)
-    : {};
-  const pid = typeof session.pid === "number" ? String(session.pid) : "pending";
-  const status = selected ? `${selected.status}/${selected.phase}` : "starting";
-  const next = selected ? selected.nextAction : "waiting for run state";
-  const objective = selected ? selected.objective : runId;
-  const log = logTail.trim()
-    ? logTail.trim().split("\n").slice(-18).join("\n")
-    : "Waiting for agent output...";
-  return [
-    "Loop Agent Console",
-    "==================",
-    "",
-    `${spinner} Processing run`,
-    "",
-    `Run: ${runId}`,
-    `Status: ${status}`,
-    `Agent pid: ${pid}`,
-    `Objective: ${truncate(objective, 96)}`,
-    `Next: ${displayValue(next)}`,
-    "",
-    `Wiki: ${snapshot.notes.length} notes | Graph: ${snapshot.graph.nodes.length} nodes, ${snapshot.graph.edges.length} edges`,
-    "",
-    "Live Log",
-    "--------",
-    log,
-    "",
-    "The Loop is running in this terminal. Press Ctrl+C to stop watching.",
-    "When the agent exits, this screen opens the normal console."
-  ].join("\n");
 }
 
 /**
@@ -224,6 +112,12 @@ function actionStatus(result, successMessage) {
   return `Action failed: ${result.error?.message ?? result.error?.kind ?? "unknown error"}`;
 }
 
+/** @param {NodeJS.WritableStream} output */
+function terminalWidth(output) {
+  const columns = /** @type {{ columns?: unknown }} */ (output).columns;
+  return typeof columns === "number" ? columns : undefined;
+}
+
 /**
  * @param {{
  *   stateDir?: string,
@@ -235,6 +129,7 @@ function actionStatus(result, successMessage) {
  *   openTargetImpl?: typeof openTarget,
  *   launchTerminalCommandImpl?: typeof launchTerminalCommand,
  *   serveWikiDashboardImpl?: typeof serveWikiDashboard,
+ *   getDashboardStatusImpl?: typeof getDashboardStatus,
  *   initialSelectedRunId?: string | null,
  *   initialAgent?: "codex" | "claudecode"
  * }} [options]
@@ -249,55 +144,64 @@ export async function runLoopTui({
   openTargetImpl = openTarget,
   launchTerminalCommandImpl = launchTerminalCommand,
   serveWikiDashboardImpl = serveWikiDashboard,
+  getDashboardStatusImpl = getDashboardStatus,
   initialSelectedRunId = null,
   initialAgent = "codex"
 } = {}) {
   if (!input.isTTY || !output.isTTY) {
-    throw new Error("Loop Agent Console requires an interactive terminal.");
+    throw new Error("Loop Prompt Console requires an interactive terminal.");
   }
   let selectedRunId = /** @type {string | null} */ (initialSelectedRunId);
   let agent = /** @type {"codex" | "claudecode"} */ (initialAgent);
   let showLogo = true;
+  let lastNotice = "";
   /** @type {import("node:http").Server | null} */
   let dashboardServer = null;
   const rl = createInterface({ input, output });
   try {
     while (true) {
-      const snapshot = await loadSnapshot({ stateDir, selectedRunId, agent });
+      const snapshot = await loadSnapshot({ stateDir, selectedRunId, agent, getDashboardStatusImpl });
       selectedRunId = snapshot.selectedRunId;
+      const useColor = shouldUseTuiColor({ isTTY: output.isTTY, env });
       if (clearScreen) {
         output.write("\x1Bc");
       }
       if (showLogo) {
         output.write(`${renderTuiLogo({
-          color: shouldUseTuiColor({ isTTY: output.isTTY, env })
+          color: useColor
         })}\n\n`);
       }
-      output.write(renderTuiHome(snapshot));
+      output.write(renderTuiHome({
+        ...snapshot,
+        notice: lastNotice
+      }, { color: useColor, width: terminalWidth(output) }));
       showLogo = false;
       if (once) {
         return;
       }
-      const answer = (await rl.question("loop> ")).trim();
-      if (!answer || answer === "refresh" || answer === "r") {
+      const answer = (await rl.question(colorize("Prompt › ", TUI_PROMPT_COLOR, useColor))).trim();
+      const action = normalizeTuiAction(answer);
+      if (!answer || action === "refresh") {
         continue;
       }
-      if (answer === "q" || answer === "quit" || answer === "exit") {
+      if (action === "quit") {
         return;
       }
       if (/^[1-9]$/.test(answer)) {
         const selected = snapshot.runs[Number(answer) - 1];
         if (selected) {
           selectedRunId = selected.id;
+          lastNotice = `Selected run ${selected.id}.`;
         }
         continue;
       }
-      if (answer === "agent") {
+      if (action === "agent") {
         const choice = (await rl.question("Agent 1) codex 2) claudecode [1]: ")).trim();
         agent = choice === "2" ? "claudecode" : "codex";
+        lastNotice = `Agent switched to ${agent}.`;
         continue;
       }
-      if (answer === "dashboard") {
+      if (action === "dashboard") {
         try {
           const url = dashboardUrl();
           if (!dashboardServer) {
@@ -306,34 +210,43 @@ export async function runLoopTui({
               dashboardServer = served.server;
             }
             openTargetImpl(served.url);
-            writeStatus(output, `Dashboard: ${served.url}`);
+            lastNotice = `Wiki dashboard opened: ${served.url}`;
           } else {
             openTargetImpl(url);
-            writeStatus(output, `Dashboard: ${url}`);
+            lastNotice = `Wiki dashboard opened: ${url}`;
           }
         } catch (error) {
           const fallbackUrl = dashboardUrl();
-          writeStatus(output, `Dashboard failed to start: ${error instanceof Error ? error.message : String(error)}\nURL: ${fallbackUrl}`);
+          lastNotice = `Dashboard failed: ${error instanceof Error ? error.message : String(error)} (${fallbackUrl})`;
         }
         continue;
       }
-      if (!selectedRunId) {
-        writeStatus(output, "Select a run first.");
+      if (!selectedRunId && action) {
+        lastNotice = `Select a run first for ${action}. Type a full objective to prepare a new Loop prompt.`;
         continue;
       }
-      if (answer === "logs") {
+      if (!selectedRunId) {
+        lastNotice = `Prepared new Loop prompt. Run: ${loopRunCommand({
+          agent,
+          prompt: answer,
+          stateDir
+        })}`;
+        await rl.question("Press Enter to return.");
+        continue;
+      }
+      if (action === "logs") {
         const tail = await readRunLogTailAction({ stateDir, id: selectedRunId, maxLines: 60 });
         writeStatus(output, tail.log || "No log output recorded yet.");
         await rl.question("Press Enter to return.");
         continue;
       }
-      if (answer === "wiki") {
+      if (action === "wiki") {
         const notes = await listWikiNotesAction({ stateDir });
         writeStatus(output, notes.notes.map((note) => `${note.kind} ${note.id} - ${note.title}`).join("\n") || "No wiki notes.");
         await rl.question("Press Enter to return.");
         continue;
       }
-      if (answer === "note") {
+      if (action === "note") {
         const title = (await rl.question("Title: ")).trim();
         const body = (await rl.question("Body: ")).trim();
         if (title && body) {
@@ -346,13 +259,13 @@ export async function runLoopTui({
             body,
             confirmation: createActionConfirmation({ action: "add-note", targetId: selectedRunId, stateDir })
           });
-          writeStatus(output, actionStatus(result, "Note added."));
+          lastNotice = actionStatus(result, "Note added.");
         } else {
-          writeStatus(output, "Title and body are required.");
+          lastNotice = "Title and body are required.";
         }
         continue;
       }
-      if (answer === "verify") {
+      if (action === "verify") {
         const summary = (await rl.question("Evidence summary: ")).trim();
         if (summary) {
           const result = await markVerificationAction({
@@ -361,13 +274,13 @@ export async function runLoopTui({
             summary,
             confirmation: createActionConfirmation({ action: "verify-run", targetId: selectedRunId, stateDir })
           });
-          writeStatus(output, actionStatus(result, "Verification evidence recorded."));
+          lastNotice = actionStatus(result, "Verification evidence recorded.");
         } else {
-          writeStatus(output, "Evidence summary is required.");
+          lastNotice = "Evidence summary is required.";
         }
         continue;
       }
-      if (answer === "complete") {
+      if (action === "complete") {
         const confirm = (await rl.question(`Mark ${selectedRunId} complete? y/N `)).trim().toLowerCase();
         if (confirm === "y" || confirm === "yes") {
           const result = await markCompleteAction({
@@ -375,11 +288,11 @@ export async function runLoopTui({
             id: selectedRunId,
             confirmation: createActionConfirmation({ action: "mark-complete", targetId: selectedRunId, stateDir })
           });
-          writeStatus(output, actionStatus(result, "Run marked complete."));
+          lastNotice = actionStatus(result, "Run marked complete.");
         }
         continue;
       }
-      if (answer === "follow") {
+      if (action === "follow") {
         const prompt = (await rl.question("Follow-up objective: ")).trim();
         if (prompt) {
           const follow = await prepareFollowUpRunAction({
@@ -390,19 +303,19 @@ export async function runLoopTui({
             confirmation: createActionConfirmation({ action: "follow-up-run", targetId: selectedRunId, stateDir })
           });
           if (follow.ok) {
-            writeStatus(output, `Prepared follow-up. Run: ${loopRunCommand({
+            lastNotice = `Prepared follow-up. Run: ${loopRunCommand({
               agent,
               prompt,
               stateDir,
               parentRunId: selectedRunId,
               lineageSource: "tui"
-            })}`);
+            })}`;
             await rl.question("Press Enter to return.");
           }
         }
         continue;
       }
-      if (answer === "codex") {
+      if (action === "codex") {
         const confirm = (await rl.question(`Open Codex for ${selectedRunId}? y/N `)).trim().toLowerCase();
         if (confirm === "y" || confirm === "yes") {
           const opened = await prepareCodexOpenAction({
@@ -414,19 +327,37 @@ export async function runLoopTui({
             const spec = codexCommandSpecFromOpenEffect(opened.effect);
             if (spec) {
               launchTerminalCommandImpl(spec);
-              writeStatus(output, `Opened Codex: ${codexCommandFromOpenEffect(opened.effect)}`);
+              lastNotice = `Opened Codex: ${codexCommandFromOpenEffect(opened.effect)}`;
             }
           } else {
             const message = "error" in opened && opened.error?.message
               ? opened.error.message
               : "No Codex resume command is available for this run.";
-            writeStatus(output, message);
+            lastNotice = message;
           }
           await rl.question("Press Enter to return.");
         }
         continue;
       }
-      writeStatus(output, `Unknown command: ${answer}`);
+      const follow = await prepareFollowUpRunAction({
+        stateDir,
+        parentRunId: selectedRunId,
+        prompt: answer,
+        createdFrom: "tui",
+        confirmation: createActionConfirmation({ action: "follow-up-run", targetId: selectedRunId, stateDir })
+      });
+      if (follow.ok) {
+        lastNotice = `Prepared connected Loop prompt. Run: ${loopRunCommand({
+          agent,
+          prompt: answer,
+          stateDir,
+          parentRunId: selectedRunId,
+          lineageSource: "tui"
+        })}`;
+      } else {
+        lastNotice = `Prompt failed: ${follow.error?.message ?? follow.error?.kind ?? "unknown error"}`;
+      }
+      await rl.question("Press Enter to return.");
     }
   } finally {
     rl.close();
@@ -463,7 +394,7 @@ export async function runLoopProcessingTui({
   continueToConsole = true
 }) {
   if (!input.isTTY || !output.isTTY) {
-    throw new Error("Loop Agent Console requires an interactive terminal.");
+    throw new Error("Loop Prompt Console requires an interactive terminal.");
   }
   let frame = 0;
   let settled = false;
@@ -480,6 +411,7 @@ export async function runLoopProcessingTui({
   });
 
   while (!settled) {
+    const useColor = shouldUseTuiColor({ isTTY: output.isTTY, env });
     const [snapshot, tail] = await Promise.all([
       loadSnapshot({ stateDir, selectedRunId: runId, agent }),
       readRunLogTailAction({ stateDir, id: runId, maxLines: 24 }).catch(() => ({ log: "" }))
@@ -488,12 +420,14 @@ export async function runLoopProcessingTui({
       output.write("\x1Bc");
     }
     output.write(`${renderTuiLogo({
-      color: shouldUseTuiColor({ isTTY: output.isTTY, env })
+      color: useColor
     })}\n\n`);
     output.write(renderTuiProcessing(snapshot, {
       runId,
       frame,
-      logTail: tail.log
+      logTail: tail.log,
+      color: useColor,
+      width: terminalWidth(output)
     }));
     output.write("\n");
     frame += 1;
@@ -512,15 +446,18 @@ export async function runLoopProcessingTui({
     loadSnapshot({ stateDir, selectedRunId: runId, agent }),
     readRunLogTailAction({ stateDir, id: runId, maxLines: 24 }).catch(() => ({ log: "" }))
   ]);
+  const useColor = shouldUseTuiColor({ isTTY: output.isTTY, env });
   if (clearScreen) {
     output.write("\x1Bc");
   }
   output.write(renderTuiProcessing(snapshot, {
     runId,
     frame,
-    logTail: tail.log
+    logTail: tail.log,
+    color: useColor,
+    width: terminalWidth(output)
   }));
-  output.write("\n\nAgent process exited. Opening Loop Agent Console...\n");
+  output.write("\n\nAgent process exited. Opening Loop Prompt Console...\n");
 
   if (continueToConsole) {
     await runLoopTui({

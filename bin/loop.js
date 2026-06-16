@@ -1099,7 +1099,7 @@ if (noArgAction === "open-tui") {
 }
 
 if (noArgAction === "non-interactive-guidance") {
-  process.stderr.write("loop with no arguments opens the Loop Agent Console in an interactive terminal.\n");
+  process.stderr.write("loop with no arguments opens the Loop Prompt Console in an interactive terminal.\n");
   process.stderr.write("Use loop \"your objective\" or loop run \"your objective\" for direct run mode.\n");
   process.exit(1);
 }
