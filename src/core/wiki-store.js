@@ -428,7 +428,6 @@ function wikiText(locale) {
         runSummary: "실행 요약",
         notProvided: "제공되지 않음",
         notRecorded: "기록되지 않음",
-        secondBrain: "세컨드 브레인",
         graphView: "그래프 보기",
         recentStatus: "최근 상태",
         runs: "실행",
@@ -507,7 +506,6 @@ function wikiText(locale) {
         runSummary: "Run summary",
         notProvided: "Not provided.",
         notRecorded: "Not recorded.",
-        secondBrain: "Second Brain",
         graphView: "Graph View",
         recentStatus: "Recent Status",
         runs: "Runs",
@@ -1824,8 +1822,7 @@ export function renderGlobalWikiDashboardHtml(projects) {
   <header>
     <div class="header-row">
       <div>
-        <p class="eyebrow">Loop Wiki</p>
-        <h1>${escapeHtml(locale === "ko" ? "모든 프로젝트" : "All Projects")}</h1>
+        <h1>Loop Wiki</h1>
       </div>
     </div>
   </header>
@@ -2116,8 +2113,7 @@ export function renderWikiDashboardHtml(notes, { confirmationTokenFor = () => ""
   <header>
     <div class="header-row">
       <div>
-        <p class="eyebrow">Loop Wiki</p>
-        <h1>${escapeHtml(text.secondBrain)}</h1>
+        <h1>Loop Wiki</h1>
       </div>
       <nav class="actions" aria-label="Wiki views">
         <a class="button" href="${routePath(basePath, "/graph")}">${escapeHtml(text.graphView)}</a>

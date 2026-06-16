@@ -373,7 +373,8 @@ test("dashboard links to a separate graph view", async () => {
   const html = renderWikiDashboardHtml(notes);
   const graphHtml = renderWikiGraphHtml(notes);
 
-  assert.match(html, /Second Brain/);
+  assert.match(html, /<h1>Loop Wiki<\/h1>/);
+  assert.doesNotMatch(html, /Second Brain/);
   assert.match(html, /Loop Stack/);
   assert.match(html, /href="\/graph"/);
   assert.match(html, />Delete Note</);
@@ -407,7 +408,8 @@ test("dashboard localizes Korean notes and does not duplicate the latest run car
   const graphHtml = renderWikiGraphHtml(notes);
 
   assert.match(html, /<html lang="ko">/);
-  assert.match(html, /세컨드 브레인/);
+  assert.match(html, /<h1>Loop Wiki<\/h1>/);
+  assert.doesNotMatch(html, /세컨드 브레인/);
   assert.match(html, /그래프 보기/);
   assert.match(html, /루프 스택/);
   assert.match(html, /노트 읽기/);
@@ -523,7 +525,8 @@ test("dashboard home aggregates Loop Wiki projects from the global registry", as
     const logPayload = await log.json();
 
     assert.equal(home.status, 200);
-    assert.match(homeHtml, /All Projects|모든 프로젝트/);
+    assert.match(homeHtml, /<h1>Loop Wiki<\/h1>/);
+    assert.doesNotMatch(homeHtml, /All Projects|모든 프로젝트/);
     assert.match(homeHtml, /feedback-saas/);
     assert.match(homeHtml, /darkwear-exhibit/);
     assert.match(homeHtml, new RegExp(`/projects/${entryOne.id}`));
