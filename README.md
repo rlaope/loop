@@ -91,8 +91,14 @@ If the folder is not a git repository yet, `loop` initializes a local git
 repository there first. That keeps write-capable agent work bounded to the
 folder you started from, even when the folder lives inside a larger parent repo.
 
-`loop "prompt"` asks you to type `1` or `2` to choose the prototype agent. The
-explicit form is `loop run "prompt"`.
+`loop "prompt"` asks you to type `1` or `2` to choose the prototype agent, then
+opens the Agent Console processing view in the same terminal. The agent output
+is captured in the run log while the TUI shows the current run state, next
+action, wiki count, graph count, and live log tail. When the agent exits, Loop
+finishes the state/wiki update and leaves you in the normal Agent Console.
+
+Use `loop run "prompt"` when you want the older explicit CLI stream that prints
+agent output and returns JSON for scripts.
 
 - `codex`
 - `claudecode`
