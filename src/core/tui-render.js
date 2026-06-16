@@ -9,6 +9,33 @@ const DEFAULT_WIDTH = 92;
 const MIN_WIDTH = 72;
 const MAX_WIDTH = 120;
 const PHASES = ["intake", "plan", "act", "verify", "stop"];
+const TUI_ACTION_ALIASES = new Map([
+  ["l", "logs"],
+  ["log", "logs"],
+  ["logs", "logs"],
+  ["w", "wiki"],
+  ["wiki", "wiki"],
+  ["d", "dashboard"],
+  ["dash", "dashboard"],
+  ["dashboard", "dashboard"],
+  ["a", "agent"],
+  ["agent", "agent"],
+  ["n", "note"],
+  ["note", "note"],
+  ["v", "verify"],
+  ["verify", "verify"],
+  ["c", "complete"],
+  ["complete", "complete"],
+  ["f", "follow"],
+  ["follow", "follow"],
+  ["x", "codex"],
+  ["codex", "codex"],
+  ["r", "refresh"],
+  ["refresh", "refresh"],
+  ["q", "quit"],
+  ["quit", "quit"],
+  ["exit", "quit"]
+]);
 const LOOP_LOGO_LINES = [
   " _      ___   ___  ____ ",
   "| |    / _ \\ / _ \\|  _ \\",
@@ -355,34 +382,7 @@ function wikiDashboardLabel(dashboard) {
 /** @param {string} value */
 export function normalizeTuiAction(value) {
   const lower = value.trim().toLowerCase();
-  const aliases = new Map([
-    ["l", "logs"],
-    ["log", "logs"],
-    ["logs", "logs"],
-    ["w", "wiki"],
-    ["wiki", "wiki"],
-    ["d", "dashboard"],
-    ["dash", "dashboard"],
-    ["dashboard", "dashboard"],
-    ["a", "agent"],
-    ["agent", "agent"],
-    ["n", "note"],
-    ["note", "note"],
-    ["v", "verify"],
-    ["verify", "verify"],
-    ["c", "complete"],
-    ["complete", "complete"],
-    ["f", "follow"],
-    ["follow", "follow"],
-    ["x", "codex"],
-    ["codex", "codex"],
-    ["r", "refresh"],
-    ["refresh", "refresh"],
-    ["q", "quit"],
-    ["quit", "quit"],
-    ["exit", "quit"]
-  ]);
-  return aliases.get(lower) ?? null;
+  return TUI_ACTION_ALIASES.get(lower) ?? null;
 }
 
 /**

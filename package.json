@@ -42,6 +42,7 @@
   ],
   "scripts": {
     "lint": "node scripts/lint.mjs",
+    "perf:tui": "node scripts/perf-tui.mjs",
     "test": "node --test",
     "typecheck": "tsc --noEmit",
     "verify:package": "npm pack --dry-run --json | node scripts/verify-package.mjs",

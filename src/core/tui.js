@@ -9,7 +9,6 @@ import {
   markVerificationAction,
   prepareCodexOpenAction,
   prepareFollowUpRunAction,
-  readGraphAction,
   readRunLogTailAction
 } from "./actions.js";
 import { dashboardUrl, getDashboardStatus, serveWikiDashboard } from "./wiki-dashboard.js";
@@ -71,20 +70,20 @@ async function loadSnapshot({
       return { ...status, unknown: false };
     })
     .catch(() => ({ running: false, occupied: false, unknown: true }));
-  const [runs, notes, graph, dashboardStatus] = await Promise.all([
+  const [runs, notes, dashboardStatus] = await Promise.all([
     listRunsAction({ stateDir }),
     listWikiNotesAction({ stateDir }),
-    readGraphAction({ stateDir }),
     dashboardProbe
   ]);
   const runList = runs.runs;
+  const noteList = notes.notes;
   const selected = runList.find((run) => run.id === selectedRunId) ?? runList[0] ?? null;
   return {
     stateDir,
     agent,
     runs: runList,
-    notes: notes.notes,
-    graph: graph.graph,
+    notes: noteList,
+    graph: graphSummaryFromNotes(noteList),
     dashboard: {
       ...dashboardStatus,
       url: dashboardUrl({ host: dashboardHost, port: dashboardPort })
@@ -112,6 +111,20 @@ function actionStatus(result, successMessage) {
     return successMessage;
   }
   return `Action failed: ${result.error?.message ?? result.error?.kind ?? "unknown error"}`;
+}
+
+/**
+ * @param {Array<Record<string, unknown> & { id: string, title?: string, kind?: string, parentId?: string, runId?: string, lineage?: unknown, status?: string, links?: Array<Record<string, unknown> & { target?: string, relationship?: string, reason?: string }> }>} notes
+ */
+function graphSummaryFromNotes(notes) {
+  let edgeCount = 0;
+  for (const note of notes) {
+    edgeCount += note.links?.length ?? 0;
+  }
+  return {
+    nodes: new Array(notes.length),
+    edges: new Array(edgeCount)
+  };
 }
 
 /** @param {NodeJS.WritableStream} output */
