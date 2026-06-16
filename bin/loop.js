@@ -28,6 +28,9 @@ import {
   sendLoopNotification,
   shouldSendLoopNotification,
   openTarget,
+  initObsidianSync,
+  installObsidianSyncService,
+  obsidianSyncStatus,
   printHelp,
   readRunLog,
   readRunState,
@@ -45,6 +48,8 @@ import {
   scriptPathFromImportMetaUrl,
   serveWikiDashboard,
   startDetachedWikiDashboard,
+  startObsidianSyncWatcher,
+  syncObsidianWiki,
   transitionRunState,
   WIKI_FAILURE_EXIT_CODE,
   waitForDashboardReady,
@@ -64,6 +69,7 @@ const flagsWithValues = new Set([
   "--expected-remote",
   "--expected-root",
   "--host",
+  "--interval",
   "--isolation",
   "--body",
   "--kind",
@@ -74,7 +80,8 @@ const flagsWithValues = new Set([
   "--port",
   "--run",
   "--state-dir",
-  "--title"
+  "--title",
+  "--vault"
 ]);
 const booleanFlags = new Set([
   "--acknowledge-local",
@@ -187,6 +194,18 @@ function dashboardHost() {
 
 function dashboardPort() {
   return parsePort(valueFor("--port"));
+}
+
+/** @param {string | undefined} value */
+function parseIntervalMs(value) {
+  if (value === undefined) {
+    return 2000;
+  }
+  const interval = Number(value);
+  if (!Number.isInteger(interval) || interval < 1) {
+    throw new Error(`Invalid interval: ${value}`);
+  }
+  return interval;
 }
 
 function positionalArgs() {
@@ -582,6 +601,108 @@ function ensureProjectBoundary({ writeMode, expectedRoot }) {
   process.stderr.write(`Loop initialized a local git repository in ${cwd} to bound this run.\n`);
 }
 
+/**
+ * @param {{
+ *   stateDir: string,
+ *   action: string
+ * }} options
+ */
+async function handleWikiObsidianCommand({ stateDir, action }) {
+  if (action === "status") {
+    const status = await obsidianSyncStatus({ stateDir });
+    process.stdout.write(`Obsidian sync: ${status.configured ? "configured" : "not configured"}\n`);
+    process.stdout.write(`Config: ${status.configPath}\n`);
+    process.stdout.write(`Manifest: ${status.manifestPath}\n`);
+    process.stdout.write(`Project folder: ${status.config?.projectFolder ?? status.project.projectFolder}\n`);
+    if (status.config) {
+      process.stdout.write(`Vault: ${status.config.vaultPath}\n`);
+      process.stdout.write(`Sync root: ${status.config.syncRoot}\n`);
+      return;
+    }
+    if (status.candidates.length) {
+      process.stdout.write("Detected vault candidates:\n");
+      for (const candidate of status.candidates) {
+        process.stdout.write(`- ${candidate}\n`);
+      }
+    } else {
+      process.stdout.write("Detected vault candidates: none\n");
+    }
+    return;
+  }
+
+  if (action === "init") {
+    const vaultPath = valueFor("--vault");
+    if (!vaultPath) {
+      process.stderr.write("loop wiki obsidian init requires --vault <path>\n");
+      process.exit(1);
+    }
+    const result = await initObsidianSync({
+      stateDir,
+      cwd: process.cwd(),
+      vaultPath
+    });
+    process.stdout.write("Obsidian sync configured.\n");
+    process.stdout.write(`Vault: ${result.config.vaultPath}\n`);
+    process.stdout.write(`Project folder: ${result.config.projectFolder}\n`);
+    process.stdout.write(`Config: ${result.configPath}\n`);
+    return;
+  }
+
+  if (action === "sync") {
+    const result = await syncObsidianWiki({ stateDir });
+    process.stdout.write("Obsidian sync complete.\n");
+    process.stdout.write(`Synced: ${result.synced}\n`);
+    process.stdout.write(`Loop to Obsidian: ${result.loopToObsidian}\n`);
+    process.stdout.write(`Obsidian to Loop: ${result.obsidianToLoop}\n`);
+    process.stdout.write(`Merged: ${result.merged}\n`);
+    process.stdout.write(`Conflicts: ${result.conflicts}\n`);
+    process.stdout.write(`Paused: ${result.paused}\n`);
+    process.stdout.write(`Manifest: ${result.manifestPath}\n`);
+    return;
+  }
+
+  if (action === "watch") {
+    const intervalMs = parseIntervalMs(valueFor("--interval"));
+    process.stdout.write(`Watching Obsidian sync every ${intervalMs}ms. Press Ctrl-C to stop.\n`);
+    startObsidianSyncWatcher({
+      stateDir,
+      intervalMs,
+      onResult: (result) => {
+        if (isRecord(result)) {
+          process.stdout.write(`Obsidian sync tick: synced=${String(result.synced ?? "?")} conflicts=${String(result.conflicts ?? "?")} paused=${String(result.paused ?? "?")}\n`);
+        } else {
+          process.stdout.write("Obsidian sync tick complete.\n");
+        }
+      },
+      onError: (error) => {
+        process.stderr.write(`Obsidian sync tick failed: ${errorMessage(error)}\n`);
+      }
+    });
+    await new Promise(() => {});
+    return;
+  }
+
+  if (action === "install-service") {
+    const result = await installObsidianSyncService({
+      stateDir,
+      scriptPath: scriptPathFromImportMetaUrl(import.meta.url),
+      cwd: process.cwd(),
+      intervalMs: parseIntervalMs(valueFor("--interval"))
+    });
+    if (!result.ok) {
+      process.stdout.write(`${result.message}\n`);
+      return;
+    }
+    process.stdout.write("Obsidian sync LaunchAgent written.\n");
+    process.stdout.write(`Plist: ${result.plistPath}\n`);
+    return;
+  }
+
+  process.stderr.write(`Unknown wiki obsidian command: ${action}\n\n`);
+  printHelp(process.stderr);
+  process.exit(1);
+}
+
 async function handleWikiCommand() {
   let stateDir;
   try {
@@ -595,6 +716,16 @@ async function handleWikiCommand() {
   const positionals = positionalArgs();
   const subcommand = positionals[0] ?? "serve";
   const id = positionals[1];
+
+  if (subcommand === "obsidian") {
+    try {
+      await handleWikiObsidianCommand({ stateDir, action: positionals[1] ?? "status" });
+    } catch (error) {
+      process.stderr.write(`Obsidian sync failed: ${errorMessage(error)}\n`);
+      process.exit(1);
+    }
+    return;
+  }
 
   if (subcommand === "add") {
     const afterAdd = positionals.slice(1);
@@ -1133,6 +1264,7 @@ if (command === "status" || command === "runs" || command === "logs") {
 
 if (command === "wiki") {
   await handleWikiCommand();
+  process.exit(0);
 }
 
 if (command === "doctor") {

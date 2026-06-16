@@ -544,6 +544,24 @@ function openCurrent(model) {
     }
     return { model: closeOverlay(model), effects: [] };
   }
+  if (model.overlay === "obsidianSettings") {
+    const actions = Array.isArray(model.overlayData.actions)
+      ? model.overlayData.actions.filter(isRecord)
+      : [];
+    const action = actions[model.overlayIndex];
+    const actionId = typeof action?.id === "string" ? action.id : "close";
+    if (actionId === "close") {
+      return { model: closeOverlay(model), effects: [] };
+    }
+    return {
+      model,
+      effects: [{
+        type: "obsidianAction",
+        action: actionId,
+        vaultPath: typeof action?.vaultPath === "string" ? action.vaultPath : undefined
+      }]
+    };
+  }
   if (model.overlay === "noteInput") {
     if (model.overlayFieldIndex === 3) {
       return { model: closeOverlay(model), effects: [] };
@@ -657,6 +675,10 @@ export function reduceTuiIntent(model, intent) {
     }
     if (model.overlay === "confirmComplete" || model.overlay === "confirmCodex") {
       return { model: moveOverlayIndex(model, delta, 2), effects: [] };
+    }
+    if (model.overlay === "obsidianSettings") {
+      const count = Array.isArray(model.overlayData.actions) ? model.overlayData.actions.length : 0;
+      return { model: moveOverlayIndex(model, delta, count), effects: [] };
     }
     if (model.overlay && isTuiTextOverlay(model.overlay)) {
       return { model: moveFieldIndex(model, delta), effects: [] };

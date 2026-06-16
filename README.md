@@ -50,6 +50,9 @@ Loop is built around six working components:
 - Loop Wiki second-brain storage in `.loop/wiki/user/*.md`,
   `.loop/wiki/ai/*.json`, `.loop/wiki/index.json`, and
   `.loop/wiki/graph.json`.
+- Optional local Obsidian filesystem sync for the human-facing
+  `.loop/wiki/user/*.md` notes. AI memory JSON, index, graph, and logs remain
+  local Loop artifacts.
 - A shared run-state schema with objective, phase, budget, stop condition,
   verification evidence, approval state, and next action.
 - Budget and stop-condition helpers for bounded agent loops.
@@ -63,7 +66,8 @@ Loop is built around six working components:
 - A no-argument `loop` Prompt Console with keyboard-first navigation: move
   between prompt, runs, selected run, status, and actions with Tab/arrows, then
   press Enter to open run pickers, action menus, confirmations, notes, logs,
-  wiki context, follow-up prompts, agent choice, and Codex resume actions.
+  wiki context, Obsidian sync settings, follow-up prompts, agent choice, and
+  Codex resume actions.
 - `loop wiki` commands for listing, reading, opening, serving, deleting, and
   adding local second-brain notes.
 - A localhost-only global Loop Wiki dashboard that indexes registered projects
@@ -206,6 +210,32 @@ for that loop session; AI memory, index, and graph files are derived from that
 local wiki. CLI commands such as `loop wiki list`, `loop wiki read`, and
 `loop wiki add` still operate on the current project's `.loop` unless you pass
 `--state-dir`.
+
+Optionally mirror the human-facing Loop Wiki markdown into an Obsidian vault:
+
+```sh
+loop wiki obsidian status
+loop wiki obsidian init --vault ~/Documents/MyVault
+loop wiki obsidian sync
+loop wiki obsidian watch --interval 2000
+loop wiki obsidian install-service
+```
+
+`status` is read-only and can auto-detect local folders that contain
+`.obsidian`. `init` creates a project-scoped mirror under
+`<vault>/Loop/<project-name>-<project-id>/`, so different projects with the
+same folder name do not collide. `sync` is bidirectional for markdown content
+edits in `.loop/wiki/user/*.md`; when Obsidian edits are imported back into
+Loop, the AI memory, index, and graph are regenerated from the markdown. Delete
+and rename propagation is intentionally not part of the MVP: if an Obsidian
+mirror file is missing, Loop restores it from the canonical `.loop/wiki/user`
+note. Delete notes through Loop commands or the local dashboard when you want
+Loop state to change. If Loop and Obsidian both edit the same note, Loop either
+performs a conservative merge or writes a conflict file under
+`.loop/wiki/conflicts` and pauses that note instead of overwriting either side.
+The Prompt Console also exposes this through the `Obsidian` action in the
+Action Bar. Persistent service install currently writes a macOS LaunchAgent; on
+other platforms, run `watch` manually.
 
 The dashboard is also a local action surface. Each run stack can add attached
 notes, record verification, mark the run complete, prepare a follow-up command

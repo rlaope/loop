@@ -356,6 +356,19 @@ function wikiDashboardLabel(dashboard) {
 }
 
 /**
+ * @param {{ configured?: boolean, unknown?: boolean }} obsidian
+ */
+function obsidianLabel(obsidian) {
+  if (obsidian.configured) {
+    return "configured";
+  }
+  if (obsidian.unknown) {
+    return "unknown";
+  }
+  return "off";
+}
+
+/**
  * @param {unknown} value
  */
 function textValue(value) {
@@ -524,6 +537,24 @@ function renderOverlay(snapshot, model, { color = false, width } = {}) {
       ...lines.slice(0, 18)
     ], { width: overlayWidth, color, focused: true });
   }
+  if (model.overlay === "obsidianSettings") {
+    const lines = Array.isArray(model.overlayData.lines) ? model.overlayData.lines.map(String) : ["Status: unknown"];
+    const actions = Array.isArray(model.overlayData.actions)
+      ? model.overlayData.actions.filter((item) => typeof item === "object" && item !== null)
+      : [];
+    const notice = textValue(model.overlayData.notice);
+    return renderBox("Obsidian Settings", [
+      "Use ↑/↓ and Enter. Esc returns to the console.",
+      "",
+      ...lines,
+      ...(notice ? ["", notice] : []),
+      "",
+      ...actions.map((action, index) => {
+        const label = "label" in action && typeof action.label === "string" ? action.label : "Action";
+        return `${rowCursor(index, model.overlayIndex, { color })} ${label}`;
+      })
+    ], { width: overlayWidth, color, focused: true });
+  }
   return "";
 }
 
@@ -535,6 +566,7 @@ function renderOverlay(snapshot, model, { color = false, width } = {}) {
  * @param {Array<unknown>} snapshot.notes
  * @param {{ nodes: Array<unknown>, edges: Array<unknown> }} snapshot.graph
  * @param {{ running?: boolean, occupied?: boolean, unknown?: boolean, url: string }} snapshot.dashboard
+ * @param {{ configured?: boolean, unknown?: boolean }} [snapshot.obsidian]
  * @param {string} snapshot.notice
  * @param {string | null} snapshot.selectedRunId
  * @param {(Record<string, unknown> & { id: string, status: string, phase: string, objective: string, nextAction?: string }) | null} snapshot.selectedRun
@@ -580,6 +612,7 @@ export function renderTuiHome(snapshot, { color = false, width, model = null } =
         "Recent runs will appear on the left."
       ];
   const wikiStatus = wikiDashboardLabel(snapshot.dashboard);
+  const obsidianStatus = obsidianLabel(snapshot.obsidian ?? {});
   const selectedHint = snapshot.selectedRunId ? compactId(snapshot.selectedRunId) : "new objective";
   const promptBuffer = tuiModel?.promptBuffer ?? "";
   const promptLines = [
@@ -602,6 +635,10 @@ export function renderTuiHome(snapshot, { color = false, width, model = null } =
       renderPill("Wiki dashboard", wikiStatus, {
         color,
         tone: wikiStatus === "online" ? "good" : wikiStatus === "blocked" ? "hot" : "warm"
+      }),
+      renderPill("Obsidian", obsidianStatus, {
+        color,
+        tone: obsidianStatus === "configured" ? "good" : obsidianStatus === "unknown" ? "hot" : "warm"
       }),
       renderPill("Selected", selectedHint, { color, tone: snapshot.selectedRunId ? "warm" : "muted" })
     ].join("   "),

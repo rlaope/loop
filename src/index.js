@@ -30,6 +30,20 @@ export {
   sendLoopNotification,
   shouldSendLoopNotification
 } from "./core/notifications.js";
+export {
+  detectObsidianVaults,
+  initObsidianSync,
+  installObsidianSyncService,
+  obsidianProjectIdentity,
+  obsidianSyncConfigPath,
+  obsidianSyncManifestPath,
+  obsidianSyncStatus,
+  readObsidianSyncConfig,
+  readObsidianSyncManifest,
+  renderMacLaunchAgentPlist,
+  startObsidianSyncWatcher,
+  syncObsidianWiki
+} from "./core/obsidian-sync.js";
 export { evaluatePolicyGate } from "./core/policy.js";
 export {
   listLoopProjects,
@@ -58,6 +72,7 @@ export {
   noteIdForRunState,
   readWikiIndex,
   readWikiNote,
+  refreshWikiNoteDerivedArtifacts,
   renderGlobalWikiDashboardHtml,
   renderMarkdownHtml,
   renderRunLogHtml,
@@ -129,6 +144,7 @@ export function printHelp(stream) {
   stream.write(`  loop demo\n`);
   stream.write(`  loop wiki [list|read <id>|open <id>|delete <id>|serve]\n`);
   stream.write(`  loop wiki add --kind plan --title "<title>" --body "<note>" [--run <run-id>]\n`);
+  stream.write(`  loop wiki obsidian [status|init|sync|watch|install-service]\n`);
   stream.write(`  loop --dry-run --objective "<objective>" [--state-dir .loop]\n`);
   stream.write(`\n`);
   stream.write(`Run without cloning:\n`);
@@ -145,6 +161,8 @@ export function printHelp(stream) {
   stream.write(`  --state-dir      Directory for durable Loop state. Defaults to .loop.\n`);
   stream.write(`  --wiki-dashboard  Start the local Loop Wiki dashboard during run mode.\n`);
   stream.write(`  --port           Port for Loop Wiki dashboard. Defaults to 3846.\n`);
+  stream.write(`  --vault          Obsidian vault path for loop wiki obsidian init.\n`);
+  stream.write(`  --interval       Watch/service sync interval in milliseconds. Defaults to 2000.\n`);
   stream.write(`  --follow         Keep streaming a run log in loop logs.\n`);
   stream.write(`  --kind           Wiki note type for loop wiki add: plan, verification, idea, decision, reference, or note.\n`);
   stream.write(`  --title          Wiki note title for loop wiki add.\n`);

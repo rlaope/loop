@@ -19,7 +19,7 @@ import {
   writeWikiForRunState
 } from "../src/index.js";
 import { parseKeyIntent } from "../src/core/tui-input.js";
-import { createTuiModel, reduceTuiIntent } from "../src/core/tui-state.js";
+import { createTuiModel, reduceTuiIntent, setTuiOverlay } from "../src/core/tui-state.js";
 
 /** @param {number} ms */
 function delay(ms) {
@@ -154,6 +154,9 @@ test("TUI home render shows prompt console panels, status, runs, and action butt
       occupied: false,
       url: "http://127.0.0.1:3846"
     },
+    obsidian: {
+      configured: false
+    },
     notice: "Ready.",
     graph: {
       nodes: [{
@@ -178,11 +181,13 @@ test("TUI home render shows prompt console panels, status, runs, and action butt
   assert.match(html, /Harness Status/);
   assert.match(html, /Agent: codex/);
   assert.match(html, /Wiki dashboard: online/);
+  assert.match(html, /Obsidian: off/);
   assert.match(html, /Phase: intake>plan>act>\[verify\]>stop/);
   assert.match(html, /Build a darkwear/);
   assert.match(html, /Action Bar/);
   assert.match(html, /\[ Dashboard \]/);
   assert.match(html, /\[ Logs \]/);
+  assert.match(html, /\[ Obsidian \]/);
   assert.match(html, /\[ Codex \]/);
   assert.match(html, /\[ Follow-up \]/);
   assert.match(html, /Tab\/Shift\+Tab focus/);
@@ -228,6 +233,44 @@ test("TUI reducer supports keyboard focus, run picker, and prompt submission", (
   reduced = reduceTuiIntent(model, { type: "open" });
   assert.equal(reduced.effects[0]?.type, "submitPrompt");
   assert.equal(reduced.effects[0]?.prompt, "후속 목표");
+});
+
+test("TUI reducer opens Obsidian settings and dispatches selected vault actions", () => {
+  const snapshot = {
+    stateDir: ".loop",
+    agent: /** @type {"codex"} */ ("codex"),
+    selectedRunId: "run-1",
+    selectedRun: null,
+    runs: [{ id: "run-1", status: "active", phase: "act", objective: "Run" }],
+    notes: [],
+    graph: { nodes: [], edges: [] },
+    dashboard: { running: false, occupied: false, url: "http://127.0.0.1:3846" },
+    obsidian: { configured: false },
+    notice: ""
+  };
+  let model = createTuiModel(snapshot, { focusRegion: "actions" });
+
+  let reduced = reduceTuiIntent(model, { type: "action", action: "obsidian" });
+  assert.equal(reduced.effects[0]?.type, "action");
+  assert.equal(reduced.effects[0]?.action, "obsidian");
+
+  model = setTuiOverlay(model, "obsidianSettings", {
+    lines: ["Status: not configured"],
+    actions: [
+      { id: "init", label: "Use /tmp/LoopVault", vaultPath: "/tmp/LoopVault" },
+      { id: "close", label: "Close" }
+    ]
+  });
+  reduced = reduceTuiIntent(model, { type: "open" });
+
+  assert.equal(reduced.effects[0]?.type, "obsidianAction");
+  assert.equal(reduced.effects[0]?.action, "init");
+  assert.equal(reduced.effects[0]?.vaultPath, "/tmp/LoopVault");
+
+  model = reduceTuiIntent(model, { type: "moveDown" }).model;
+  reduced = reduceTuiIntent(model, { type: "open" });
+  assert.equal(reduced.effects.length, 0);
+  assert.equal(reduced.model.overlay, null);
 });
 
 test("TUI reducer preserves confirmation and two-field note semantics", () => {
@@ -317,6 +360,10 @@ test("TUI key parser maps navigation, shortcuts, and Korean prompt text", () => 
   assert.deepEqual(parseKeyIntent({ str: "d", key: { name: "d" }, model: runsModel }), {
     type: "action",
     action: "dashboard"
+  });
+  assert.deepEqual(parseKeyIntent({ str: "o", key: { name: "o" }, model: runsModel }), {
+    type: "action",
+    action: "obsidian"
   });
   assert.deepEqual(parseKeyIntent({ str: "한", key: { name: "한" }, model: runsModel }), {
     type: "appendText",
@@ -658,6 +705,85 @@ test("TUI dashboard command starts and opens the local dashboard", async () => {
   assert.equal(closed, true);
 });
 
+test("TUI Obsidian settings can detect and initialize a vault from the keyboard", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-tui-obsidian-"));
+  const state = createRunState({
+    objective: "Mirror wiki notes into Obsidian",
+    now: new Date("2026-06-13T08:00:00.000Z")
+  });
+  await writeRunState(state, { stateDir });
+  await writeWikiForRunState(state, { stateDir });
+  const { input, output } = createTtyStreams();
+  const vaultPath = join(stateDir, "PersonalVault");
+  let configured = false;
+  let initializedVault = "";
+  let text = "";
+  output.on("data", (chunk) => {
+    text += String(chunk).replace(/\x1b\[[0-9;]*m/g, "");
+  });
+
+  const statusForTest = async ({ detectCandidates = false } = {}) => ({
+    configured,
+    configPath: join(stateDir, "obsidian-sync.json"),
+    manifestPath: join(stateDir, "obsidian-sync-manifest.json"),
+    config: configured
+      ? {
+          version: /** @type {1} */ (1),
+          vaultPath,
+          projectId: "project-1",
+          projectName: "loop",
+          projectFolder: "loop-project-1",
+          syncRoot: join(vaultPath, "Loop", "loop-project-1"),
+          enabled: true,
+          createdAt: "2026-06-13T08:00:00.000Z",
+          updatedAt: "2026-06-13T08:00:00.000Z"
+        }
+      : null,
+    candidates: configured || !detectCandidates ? [] : [vaultPath],
+    project: {
+      projectId: "project-1",
+      projectName: "loop",
+      projectFolder: "loop-project-1"
+    }
+  });
+
+  const run = runLoopTui({
+    stateDir,
+    input,
+    output,
+    clearScreen: false,
+    obsidianSyncStatusImpl: statusForTest,
+    initObsidianSyncImpl: async ({ vaultPath: selectedVaultPath }) => {
+      initializedVault = selectedVaultPath;
+      configured = true;
+      return {
+        ok: true,
+        config: {
+          version: 1,
+          vaultPath,
+          projectId: "project-1",
+          projectName: "loop",
+          projectFolder: "loop-project-1",
+          syncRoot: join(vaultPath, "Loop", "loop-project-1"),
+          enabled: true,
+          createdAt: "2026-06-13T08:00:00.000Z",
+          updatedAt: "2026-06-13T08:00:00.000Z"
+        },
+        configPath: join(stateDir, "obsidian-sync.json")
+      };
+    }
+  });
+  await delay(20);
+  await writeKeys(input, ["o", "\r", "\x03"]);
+  await run;
+
+  assert.equal(initializedVault, vaultPath);
+  assert.match(text, /Obsidian Settings/);
+  assert.match(text, /Use .*PersonalVault/);
+  assert.match(text, /Obsidian sync configured: loop-project-1/);
+  assert.match(text, /Obsidian: configured/);
+});
+
 test("TUI complete action requires confirmation and cancel has no side effect", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "loop-tui-complete-cancel-"));
   const state = createRunState({
@@ -696,20 +822,10 @@ test("TUI complete action requires confirmation and cancel has no side effect", 
   });
   await delay(20);
   await writeKeys(input, [
-    "\t",
-    "\r",
-    "\x1b[B",
-    "\x1b[B",
-    "\x1b[B",
-    "\x1b[B",
-    "\x1b[B",
-    "\x1b[B",
-    "\x1b[B",
+    "c",
     "\x1b[B",
     "\r",
-    "\x1b[B",
-    "\r",
-    "q"
+    "\x03"
   ]);
   await run;
 
@@ -756,19 +872,13 @@ test("TUI note action keeps title and body as separate required fields", async (
   });
   await delay(20);
   await writeKeys(input, [
-    "\t",
-    "\r",
-    "\x1b[B",
-    "\x1b[B",
-    "\x1b[B",
-    "\x1b[B",
-    "\r",
+    "n",
     "Title",
     "\t",
     "Body",
     "\t",
     "\r",
-    "q"
+    "\x03"
   ]);
   await run;
 

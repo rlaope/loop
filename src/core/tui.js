@@ -1,4 +1,5 @@
 import { emitKeypressEvents } from "node:readline";
+import { basename } from "node:path";
 
 import {
   addWikiNoteAction,
@@ -13,6 +14,12 @@ import {
 } from "./actions.js";
 import { dashboardUrl, getDashboardStatus, serveWikiDashboard } from "./wiki-dashboard.js";
 import { openTarget } from "./open-target.js";
+import {
+  initObsidianSync,
+  installObsidianSyncService,
+  obsidianSyncStatus,
+  syncObsidianWiki
+} from "./obsidian-sync.js";
 import {
   codexCommandFromOpenEffect,
   codexCommandSpecFromOpenEffect,
@@ -58,7 +65,7 @@ export function directPromptTuiDispatch({ hasCommand, stdinTTY, stdoutTTY, justR
 }
 
 /**
- * @param {{ stateDir?: string, selectedRunId?: string | null, agent?: "codex" | "claudecode", dashboardHost?: string, dashboardPort?: number, getDashboardStatusImpl?: typeof getDashboardStatus }} [options]
+ * @param {{ stateDir?: string, selectedRunId?: string | null, agent?: "codex" | "claudecode", dashboardHost?: string, dashboardPort?: number, getDashboardStatusImpl?: typeof getDashboardStatus, obsidianSyncStatusImpl?: typeof obsidianSyncStatus, detectObsidianCandidates?: boolean }} [options]
  */
 async function loadSnapshot({
   stateDir = ".loop",
@@ -66,7 +73,9 @@ async function loadSnapshot({
   agent = "codex",
   dashboardHost,
   dashboardPort,
-  getDashboardStatusImpl = getDashboardStatus
+  getDashboardStatusImpl = getDashboardStatus,
+  obsidianSyncStatusImpl = obsidianSyncStatus,
+  detectObsidianCandidates = false
 } = {}) {
   const dashboardProbe = getDashboardStatusImpl({ host: dashboardHost, port: dashboardPort, timeoutMs: 80 })
     .then((status) => {
@@ -76,10 +85,27 @@ async function loadSnapshot({
       return { ...status, unknown: false };
     })
     .catch(() => ({ running: false, occupied: false, unknown: true }));
-  const [runs, notes, dashboardStatus] = await Promise.all([
+  const obsidianProbe = obsidianSyncStatusImpl({
+    stateDir,
+    detectCandidates: detectObsidianCandidates
+  }).catch(() => ({
+    configured: false,
+    configPath: "",
+    manifestPath: "",
+    config: null,
+    candidates: [],
+    project: {
+      projectId: "",
+      projectName: "",
+      projectFolder: ""
+    },
+    unknown: true
+  }));
+  const [runs, notes, dashboardStatus, obsidian] = await Promise.all([
     listRunsAction({ stateDir }),
     listWikiNotesAction({ stateDir }),
-    dashboardProbe
+    dashboardProbe,
+    obsidianProbe
   ]);
   const runList = runs.runs;
   const noteList = notes.notes;
@@ -94,6 +120,7 @@ async function loadSnapshot({
       ...dashboardStatus,
       url: dashboardUrl({ host: dashboardHost, port: dashboardPort })
     },
+    obsidian,
     notice: "",
     selectedRunId: selected?.id ?? null,
     selectedRun: selected
@@ -109,6 +136,45 @@ function actionStatus(result, successMessage) {
     return successMessage;
   }
   return `Action failed: ${result.error?.message ?? result.error?.kind ?? "unknown error"}`;
+}
+
+/**
+ * @param {Awaited<ReturnType<typeof obsidianSyncStatus>> & { unknown?: boolean }} status
+ * @param {string} [notice]
+ */
+function obsidianOverlayData(status, notice = "") {
+  const configured = status.configured && status.config;
+  const lines = configured
+    ? [
+        "Status: configured",
+        `Vault: ${status.config?.vaultPath ?? ""}`,
+        `Project folder: ${status.config?.projectFolder ?? status.project.projectFolder}`,
+        `Sync root: ${status.config?.syncRoot ?? ""}`
+      ]
+    : [
+        status.unknown ? "Status: unknown" : "Status: not configured",
+        `Project folder: ${status.project.projectFolder || "unknown"}`,
+        status.candidates.length
+          ? `Detected vaults: ${status.candidates.length}`
+          : "Detected vaults: none"
+      ];
+  const actions = configured
+    ? [
+        { id: "sync", label: "Sync now" },
+        { id: "install-service", label: "Install watcher" },
+        { id: "refresh", label: "Refresh" },
+        { id: "close", label: "Close" }
+      ]
+    : [
+        ...status.candidates.slice(0, 6).map((candidate) => ({
+          id: "init",
+          label: `Use ${basename(candidate) || candidate}`,
+          vaultPath: candidate
+        })),
+        { id: "refresh", label: "Refresh" },
+        { id: "close", label: "Close" }
+      ];
+  return { lines, actions, notice };
 }
 
 /**
@@ -143,6 +209,10 @@ function terminalWidth(output) {
  *   launchTerminalCommandImpl?: typeof launchTerminalCommand,
  *   serveWikiDashboardImpl?: typeof serveWikiDashboard,
  *   getDashboardStatusImpl?: typeof getDashboardStatus,
+ *   obsidianSyncStatusImpl?: typeof obsidianSyncStatus,
+ *   initObsidianSyncImpl?: typeof initObsidianSync,
+ *   syncObsidianWikiImpl?: typeof syncObsidianWiki,
+ *   installObsidianSyncServiceImpl?: typeof installObsidianSyncService,
  *   dashboardHost?: string,
  *   dashboardPort?: number,
  *   initialSelectedRunId?: string | null,
@@ -167,6 +237,10 @@ export async function runLoopTui({
   launchTerminalCommandImpl = launchTerminalCommand,
   serveWikiDashboardImpl = serveWikiDashboard,
   getDashboardStatusImpl = getDashboardStatus,
+  obsidianSyncStatusImpl = obsidianSyncStatus,
+  initObsidianSyncImpl = initObsidianSync,
+  syncObsidianWikiImpl = syncObsidianWiki,
+  installObsidianSyncServiceImpl = installObsidianSyncService,
   dashboardHost,
   dashboardPort,
   initialSelectedRunId = null,
@@ -191,7 +265,8 @@ export async function runLoopTui({
     agent: initialAgent,
     dashboardHost,
     dashboardPort,
-    getDashboardStatusImpl
+    getDashboardStatusImpl,
+    obsidianSyncStatusImpl
   });
   let model = createTuiModel(snapshot, {
     selectedRunId: initialSelectedRunId,
@@ -208,7 +283,8 @@ export async function runLoopTui({
       agent: model.agent,
       dashboardHost,
       dashboardPort,
-      getDashboardStatusImpl
+      getDashboardStatusImpl,
+      obsidianSyncStatusImpl
     });
     model = updateTuiSnapshot(model, snapshot);
     const useColor = shouldUseTuiColor({ isTTY: output.isTTY, env });
@@ -261,6 +337,36 @@ export async function runLoopTui({
     }
     if (effect.type === "quit") {
       return true;
+    }
+    if (effect.type === "obsidianAction") {
+      const obsidianAction = String(effect.action ?? "");
+      let notice = "";
+      try {
+        if (obsidianAction === "init") {
+          const vaultPath = typeof effect.vaultPath === "string" ? effect.vaultPath : "";
+          if (!vaultPath) {
+            model = setTuiNotice(model, "No Obsidian vault selected.");
+            return false;
+          }
+          const result = await initObsidianSyncImpl({ stateDir, vaultPath });
+          notice = `Obsidian sync configured: ${result.config.projectFolder}`;
+        } else if (obsidianAction === "sync") {
+          const result = await syncObsidianWikiImpl({ stateDir });
+          notice = `Obsidian sync complete: synced ${result.synced}, conflicts ${result.conflicts}.`;
+        } else if (obsidianAction === "install-service") {
+          const result = await installObsidianSyncServiceImpl({ stateDir });
+          notice = result.ok
+            ? `Obsidian watcher installed: ${result.plistPath}`
+            : result.message ?? "Obsidian watcher install is not supported on this platform.";
+        } else if (obsidianAction !== "refresh") {
+          notice = `Unknown Obsidian action: ${obsidianAction}`;
+        }
+      } catch (error) {
+        notice = `Obsidian action failed: ${error instanceof Error ? error.message : String(error)}`;
+      }
+      const status = await obsidianSyncStatusImpl({ stateDir, detectCandidates: true });
+      model = setTuiOverlay(model, "obsidianSettings", obsidianOverlayData(status, notice));
+      return false;
     }
     if (effect.type === "submitPrompt") {
       const prompt = String(effect.prompt ?? "").trim();
@@ -336,6 +442,15 @@ export async function runLoopTui({
         ? notes.notes.map((note) => `${note.kind} ${note.id} - ${note.title}`)
         : ["No wiki notes."];
       model = setTuiOverlay(model, "wikiList", { lines });
+      return false;
+    }
+    if (action === "obsidian") {
+      try {
+        const status = await obsidianSyncStatusImpl({ stateDir, detectCandidates: true });
+        model = setTuiOverlay(model, "obsidianSettings", obsidianOverlayData(status));
+      } catch (error) {
+        model = setTuiNotice(model, `Obsidian status failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
       return false;
     }
     if (action === "note") {
