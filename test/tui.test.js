@@ -18,6 +18,38 @@ import {
   writeRunState,
   writeWikiForRunState
 } from "../src/index.js";
+import { parseKeyIntent } from "../src/core/tui-input.js";
+import { createTuiModel, reduceTuiIntent } from "../src/core/tui-state.js";
+
+/** @param {number} ms */
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function createTtyStreams() {
+  const input = /** @type {PassThrough & { isTTY?: boolean, setRawMode?: (enabled: boolean) => unknown }} */ (new PassThrough());
+  const output = /** @type {PassThrough & { isTTY?: boolean }} */ (new PassThrough());
+  /** @type {boolean[]} */
+  const rawModes = [];
+  input.isTTY = true;
+  output.isTTY = true;
+  input.setRawMode = (enabled) => {
+    rawModes.push(enabled);
+    return input;
+  };
+  return { input, output, rawModes };
+}
+
+/**
+ * @param {PassThrough} input
+ * @param {string[]} keys
+ */
+async function writeKeys(input, keys) {
+  for (const key of keys) {
+    input.write(key);
+    await delay(5);
+  }
+}
 
 test("no-arg dispatch opens TUI only for interactive terminals", () => {
   assert.equal(noArgTuiDispatch({
@@ -149,11 +181,188 @@ test("TUI home render shows prompt console panels, status, runs, and action butt
   assert.match(html, /Phase: intake>plan>act>\[verify\]>stop/);
   assert.match(html, /Build a darkwear/);
   assert.match(html, /Action Bar/);
-  assert.match(html, /Primary \[ Enter Send Prompt \]/);
-  assert.match(html, /Review\s+\[ W Wiki \]/);
-  assert.match(html, /System\s+\[ 1-9 Select \]/);
-  assert.match(html, /X Codex/);
+  assert.match(html, /\[ Dashboard \]/);
+  assert.match(html, /\[ Logs \]/);
+  assert.match(html, /\[ Codex \]/);
+  assert.match(html, /\[ Follow-up \]/);
+  assert.match(html, /Tab\/Shift\+Tab focus/);
   assert.match(html, /Last Event/);
+});
+
+test("TUI reducer supports keyboard focus, run picker, and prompt submission", () => {
+  const snapshot = {
+    stateDir: ".loop",
+    agent: /** @type {"codex"} */ ("codex"),
+    selectedRunId: "run-1",
+    selectedRun: null,
+    runs: [
+      { id: "run-1", status: "active", phase: "act", objective: "First run" },
+      { id: "run-2", status: "active", phase: "verify", objective: "Second run" }
+    ],
+    notes: [],
+    graph: { nodes: [], edges: [] },
+    dashboard: { running: false, occupied: false, url: "http://127.0.0.1:3846" },
+    notice: ""
+  };
+  let model = createTuiModel(snapshot);
+
+  assert.equal(model.focusRegion, "runs");
+  let reduced = reduceTuiIntent(model, { type: "moveDown", runCount: snapshot.runs.length });
+  model = reduced.model;
+  assert.equal(model.selectedRunIndex, 1);
+
+  reduced = reduceTuiIntent(model, { type: "open", runCount: snapshot.runs.length });
+  model = reduced.model;
+  assert.equal(model.overlay, "runPicker");
+  assert.equal(model.overlayIndex, 1);
+
+  reduced = reduceTuiIntent(model, { type: "open", runCount: snapshot.runs.length });
+  model = reduced.model;
+  assert.equal(model.overlay, null);
+  assert.equal(reduced.effects[0]?.type, "selectRunIndex");
+  assert.equal(reduced.effects[0]?.index, 1);
+
+  model = reduceTuiIntent(model, { type: "focusPrevious" }).model;
+  assert.equal(model.focusRegion, "prompt");
+  model = reduceTuiIntent(model, { type: "appendText", text: "후속 목표" }).model;
+  reduced = reduceTuiIntent(model, { type: "open" });
+  assert.equal(reduced.effects[0]?.type, "submitPrompt");
+  assert.equal(reduced.effects[0]?.prompt, "후속 목표");
+});
+
+test("TUI reducer preserves confirmation and two-field note semantics", () => {
+  const snapshot = {
+    stateDir: ".loop",
+    agent: /** @type {"codex"} */ ("codex"),
+    selectedRunId: "run-1",
+    selectedRun: null,
+    runs: [{ id: "run-1", status: "active", phase: "verify", objective: "Run" }],
+    notes: [],
+    graph: { nodes: [], edges: [] },
+    dashboard: { running: false, occupied: false, url: "http://127.0.0.1:3846" },
+    notice: ""
+  };
+  let model = createTuiModel(snapshot, { focusRegion: "actions" });
+
+  let reduced = reduceTuiIntent(model, { type: "action", action: "complete" });
+  model = reduced.model;
+  assert.equal(model.overlay, "confirmComplete");
+  assert.equal(reduced.effects.length, 0);
+  reduced = reduceTuiIntent(model, { type: "moveDown" });
+  model = reduced.model;
+  reduced = reduceTuiIntent(model, { type: "open" });
+  assert.equal(reduced.effects.length, 0);
+  assert.equal(reduced.model.overlay, null);
+
+  model = createTuiModel(snapshot, { focusRegion: "actions" });
+  model = reduceTuiIntent(model, { type: "action", action: "note" }).model;
+  assert.equal(model.overlay, "noteInput");
+  model = reduceTuiIntent(model, { type: "appendText", text: "Title" }).model;
+  model = reduceTuiIntent(model, { type: "focusNext" }).model;
+  model = reduceTuiIntent(model, { type: "appendText", text: "Body" }).model;
+  model = reduceTuiIntent(model, { type: "focusNext" }).model;
+  model = reduceTuiIntent(model, { type: "appendText", text: "Ignored" }).model;
+  model = reduceTuiIntent(model, { type: "deleteText" }).model;
+  assert.equal(model.overlayData.title, "Title");
+  assert.equal(model.overlayData.body, "Body");
+  reduced = reduceTuiIntent(model, { type: "open" });
+  assert.equal(reduced.effects[0]?.type, "action");
+  assert.equal(reduced.effects[0]?.action, "note");
+  assert.equal(reduced.effects[0]?.title, "Title");
+  assert.equal(reduced.effects[0]?.body, "Body");
+});
+
+test("TUI modal overlays ignore global shortcuts and background focus changes", () => {
+  const snapshot = {
+    stateDir: ".loop",
+    agent: /** @type {"codex"} */ ("codex"),
+    selectedRunId: "run-1",
+    selectedRun: null,
+    runs: [{ id: "run-1", status: "active", phase: "verify", objective: "Run" }],
+    notes: [],
+    graph: { nodes: [], edges: [] },
+    dashboard: { running: false, occupied: false, url: "http://127.0.0.1:3846" },
+    notice: ""
+  };
+  let model = createTuiModel(snapshot, { focusRegion: "actions" });
+  model = reduceTuiIntent(model, { type: "action", action: "complete" }).model;
+
+  assert.equal(model.overlay, "confirmComplete");
+  assert.equal(parseKeyIntent({ str: "d", key: { name: "d" }, model }), null);
+
+  let reduced = reduceTuiIntent(model, { type: "action", action: "dashboard" });
+  assert.equal(reduced.model.overlay, "confirmComplete");
+  assert.equal(reduced.effects.length, 0);
+
+  reduced = reduceTuiIntent(model, { type: "refresh" });
+  assert.equal(reduced.model.overlay, "confirmComplete");
+  assert.equal(reduced.effects.length, 0);
+
+  reduced = reduceTuiIntent(model, { type: "focusNext" });
+  assert.equal(reduced.model.focusRegion, "actions");
+  assert.equal(reduced.model.overlay, "confirmComplete");
+});
+
+test("TUI key parser maps navigation, shortcuts, and Korean prompt text", () => {
+  const runsModel = {
+    overlay: null,
+    focusRegion: "runs",
+    promptBuffer: "",
+    promptMode: false
+  };
+  assert.deepEqual(parseKeyIntent({ key: { name: "down" }, model: runsModel, runCount: 2 }), {
+    type: "moveDown",
+    runCount: 2
+  });
+  assert.deepEqual(parseKeyIntent({ str: "d", key: { name: "d" }, model: runsModel }), {
+    type: "action",
+    action: "dashboard"
+  });
+  assert.deepEqual(parseKeyIntent({ str: "한", key: { name: "한" }, model: runsModel }), {
+    type: "appendText",
+    text: "한"
+  });
+  assert.deepEqual(parseKeyIntent({
+    str: "d",
+    key: { name: "d" },
+    model: { ...runsModel, focusRegion: "prompt", promptMode: true }
+  }), {
+    type: "appendText",
+    text: "d"
+  });
+  assert.deepEqual(parseKeyIntent({ key: { name: "c", ctrl: true }, model: runsModel }), {
+    type: "quit"
+  });
+});
+
+test("TUI run picker windows long histories around the keyboard cursor", () => {
+  const runs = Array.from({ length: 15 }, (_, index) => ({
+    id: `run-${String(index + 1).padStart(2, "0")}`,
+    status: "active",
+    phase: "act",
+    objective: `Run ${String(index + 1).padStart(2, "0")}`
+  }));
+  const snapshot = {
+    stateDir: ".loop",
+    agent: /** @type {"codex"} */ ("codex"),
+    selectedRunId: "run-13",
+    selectedRun: runs[12],
+    runs,
+    notes: [],
+    graph: { nodes: [], edges: [] },
+    dashboard: { running: false, occupied: false, url: "http://127.0.0.1:3846" },
+    notice: ""
+  };
+  const model = {
+    ...createTuiModel(snapshot),
+    overlay: "runPicker",
+    overlayIndex: 12
+  };
+  const html = renderTuiHome(snapshot, { width: 100, model });
+
+  assert.match(html, /Showing 4-15 of 15/);
+  assert.match(html, /13\. active\/act\s+Run 13/);
+  assert.doesNotMatch(html, /1\. active\/act\s+Run 01/);
 });
 
 test("TUI home render distinguishes unknown wiki dashboard status from blocked", () => {
@@ -380,42 +589,37 @@ test("TUI init logo honors no-color terminal preferences", async () => {
 
 test("TUI init logo appears only on the startup render", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "loop-tui-logo-once-"));
-  const input = /** @type {PassThrough & { isTTY?: boolean }} */ (new PassThrough());
-  const output = /** @type {PassThrough & { isTTY?: boolean }} */ (new PassThrough());
-  input.isTTY = true;
-  output.isTTY = true;
+  const { input, output, rawModes } = createTtyStreams();
   let text = "";
-  let promptCount = 0;
   output.on("data", (chunk) => {
-    const value = String(chunk);
-    text += value;
-    const plain = value.replace(/\x1b\[[0-9;]*m/g, "");
-    if (!plain.endsWith("Prompt › ")) {
-      return;
-    }
-    promptCount += 1;
-    input.write(promptCount === 1 ? "refresh\n" : "q\n");
+    text += String(chunk);
   });
 
-  await runLoopTui({
+  const run = runLoopTui({
     stateDir,
     input,
     output,
     clearScreen: false,
     env: { FORCE_COLOR: "1" }
   });
+  await delay(20);
+  input.write("\x03");
+  await run;
 
   assert.equal((text.match(/\.----->----\./g) ?? []).length, 1);
-  assert.equal((text.match(/Loop Prompt Console/g) ?? []).length, 2);
+  assert.match(text, /Loop Prompt Console/);
+  assert.deepEqual(rawModes, [true, false]);
 });
 
 test("TUI dashboard command starts and opens the local dashboard", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "loop-tui-dashboard-"));
-  const input = /** @type {PassThrough & { isTTY?: boolean }} */ (new PassThrough());
-  const output = /** @type {PassThrough & { isTTY?: boolean }} */ (new PassThrough());
-  input.isTTY = true;
-  output.isTTY = true;
-  let promptCount = 0;
+  const state = createRunState({
+    objective: "Dashboard shortcut run",
+    now: new Date("2026-06-13T08:00:00.000Z")
+  });
+  await writeRunState(state, { stateDir });
+  await writeWikiForRunState(state, { stateDir });
+  const { input, output } = createTtyStreams();
   let serveCalls = 0;
   let opened = "";
   let closed = false;
@@ -426,16 +630,8 @@ test("TUI dashboard command starts and opens the local dashboard", async () => {
   await new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => resolve(undefined));
   });
-  output.on("data", (chunk) => {
-    const plain = String(chunk).replace(/\x1b\[[0-9;]*m/g, "");
-    if (!plain.endsWith("Prompt › ")) {
-      return;
-    }
-    promptCount += 1;
-    input.write(promptCount === 1 ? "dashboard\n" : "q\n");
-  });
 
-  await runLoopTui({
+  const run = runLoopTui({
     stateDir,
     input,
     output,
@@ -453,10 +649,131 @@ test("TUI dashboard command starts and opens the local dashboard", async () => {
       return { opened: true, recorded: false, target };
     }
   });
+  await delay(20);
+  await writeKeys(input, ["d", "q"]);
+  await run;
 
   assert.equal(serveCalls, 1);
   assert.equal(opened, "http://127.0.0.1:3846");
   assert.equal(closed, true);
+});
+
+test("TUI complete action requires confirmation and cancel has no side effect", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-tui-complete-cancel-"));
+  const state = createRunState({
+    objective: "Complete cancel run",
+    now: new Date("2026-06-13T08:00:00.000Z")
+  });
+  await writeRunState(state, { stateDir });
+  await writeWikiForRunState(state, { stateDir });
+  const { input, output } = createTtyStreams();
+  let text = "";
+  let completeCalls = 0;
+  output.on("data", (chunk) => {
+    text += String(chunk).replace(/\x1b\[[0-9;]*m/g, "");
+  });
+
+  const run = runLoopTui({
+    stateDir,
+    input,
+    output,
+    clearScreen: false,
+    markCompleteActionImpl: async () => {
+      completeCalls += 1;
+      return {
+        ok: true,
+        state,
+        paths: { jsonPath: "run.json", summaryPath: "run.md" },
+        wikiPaths: {
+          id: "note-1",
+          notePath: "note.md",
+          memoryPath: "memory.json",
+          indexPath: "index.json",
+          graphPath: "graph.json"
+        }
+      };
+    }
+  });
+  await delay(20);
+  await writeKeys(input, [
+    "\t",
+    "\r",
+    "\x1b[B",
+    "\x1b[B",
+    "\x1b[B",
+    "\x1b[B",
+    "\x1b[B",
+    "\x1b[B",
+    "\x1b[B",
+    "\x1b[B",
+    "\r",
+    "\x1b[B",
+    "\r",
+    "q"
+  ]);
+  await run;
+
+  assert.match(text, /Confirm Complete/);
+  assert.equal(completeCalls, 0);
+});
+
+test("TUI note action keeps title and body as separate required fields", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-tui-note-fields-"));
+  const state = createRunState({
+    objective: "Note field run",
+    now: new Date("2026-06-13T08:00:00.000Z")
+  });
+  await writeRunState(state, { stateDir });
+  await writeWikiForRunState(state, { stateDir });
+  const { input, output } = createTtyStreams();
+  let text = "";
+  /** @type {Array<{ title: string, body: string }>} */
+  const notes = [];
+  output.on("data", (chunk) => {
+    text += String(chunk).replace(/\x1b\[[0-9;]*m/g, "");
+  });
+
+  const run = runLoopTui({
+    stateDir,
+    input,
+    output,
+    clearScreen: false,
+    addWikiNoteActionImpl: async (options) => {
+      notes.push({ title: options.title, body: options.body });
+      return {
+        ok: true,
+        result: {
+          id: "note-1",
+          kind: "note",
+          notePath: "note.md",
+          memoryPath: "memory.json",
+          indexPath: "index.json",
+          graphPath: "graph.json",
+          parentId: state.id
+        }
+      };
+    }
+  });
+  await delay(20);
+  await writeKeys(input, [
+    "\t",
+    "\r",
+    "\x1b[B",
+    "\x1b[B",
+    "\x1b[B",
+    "\x1b[B",
+    "\r",
+    "Title",
+    "\t",
+    "Body",
+    "\t",
+    "\r",
+    "q"
+  ]);
+  await run;
+
+  assert.match(text, /Add Note/);
+  assert.deepEqual(notes, [{ title: "Title", body: "Body" }]);
 });
 
 test("TUI free text input is treated as a Loop prompt, not an unknown command", async () => {
@@ -467,39 +784,22 @@ test("TUI free text input is treated as a Loop prompt, not an unknown command", 
   });
   await writeRunState(state, { stateDir });
   await writeWikiForRunState(state, { stateDir });
-  const input = /** @type {PassThrough & { isTTY?: boolean }} */ (new PassThrough());
-  const output = /** @type {PassThrough & { isTTY?: boolean }} */ (new PassThrough());
-  input.isTTY = true;
-  output.isTTY = true;
+  const { input, output } = createTtyStreams();
   let text = "";
-  let stage = 0;
   output.on("data", (chunk) => {
-    const value = String(chunk);
-    const plain = value.replace(/\x1b\[[0-9;]*m/g, "");
-    text += plain;
-    if (stage === 0 && plain.endsWith("Prompt › ")) {
-      stage = 1;
-      input.write("Continue polishing the live log view\n");
-      return;
-    }
-    if (stage === 1 && plain.includes("Press Enter to return.")) {
-      stage = 2;
-      input.write("\n");
-      return;
-    }
-    if (stage === 2 && plain.endsWith("Prompt › ")) {
-      stage = 3;
-      input.write("q\n");
-    }
+    text += String(chunk).replace(/\x1b\[[0-9;]*m/g, "");
   });
 
-  await runLoopTui({
+  const run = runLoopTui({
     stateDir,
     input,
     output,
     clearScreen: false,
     getDashboardStatusImpl: async () => ({ running: false, occupied: false })
   });
+  await delay(20);
+  await writeKeys(input, ["\t", "\t", "\t", "\t", "Continue polishing the live log view", "\r", "\x03"]);
+  await run;
 
   assert.match(text, /Prepared connected Loop prompt/);
   assert.match(text, /--parent-run/);
