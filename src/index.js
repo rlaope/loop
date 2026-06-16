@@ -91,7 +91,14 @@ export {
   terminalCommandDisplay,
   terminalLaunchCommand
 } from "./core/terminal-launcher.js";
-export { noArgTuiDispatch, renderTuiHome, runLoopTui } from "./core/tui.js";
+export {
+  directPromptTuiDispatch,
+  noArgTuiDispatch,
+  renderTuiHome,
+  renderTuiProcessing,
+  runLoopProcessingTui,
+  runLoopTui
+} from "./core/tui.js";
 
 export const packageName = "@rlaope/loop";
 
@@ -146,6 +153,7 @@ export function printHelp(stream) {
   stream.write(`  --no-notify      Disable desktop notifications for this run.\n`);
   stream.write(`\n`);
   stream.write(`No-argument loop opens the local Agent Console TUI in an interactive terminal.\n`);
+  stream.write(`Direct loop "prompt" opens a processing TUI; loop run "prompt" keeps the explicit CLI stream.\n`);
   stream.write(`Doctor mode checks local readiness without writing state or launching agents.\n`);
   stream.write(`Demo mode prints example workflows without writing state, starting services, or launching agents.\n`);
   stream.write(`Dry-run mode writes durable Loop state and local wiki artifacts only.\n`);

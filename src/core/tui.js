@@ -49,6 +49,16 @@ export function noArgTuiDispatch({ argCount, stdinTTY, stdoutTTY }) {
 }
 
 /**
+ * @param {{ hasCommand: boolean, stdinTTY: boolean, stdoutTTY: boolean }} input
+ */
+export function directPromptTuiDispatch({ hasCommand, stdinTTY, stdoutTTY }) {
+  if (!hasCommand && stdinTTY && stdoutTTY) {
+    return "processing-tui";
+  }
+  return "standard-run";
+}
+
+/**
  * @param {string} value
  * @param {number} maxLength
  */
@@ -105,6 +115,14 @@ async function loadSnapshot({ stateDir = ".loop", selectedRunId = null, agent = 
 }
 
 /**
+ * @param {string | undefined} value
+ * @param {string} fallback
+ */
+function displayValue(value, fallback = "unknown") {
+  return value && value.trim() ? value : fallback;
+}
+
+/**
  * @param {Awaited<ReturnType<typeof loadSnapshot>>} snapshot
  */
 export function renderTuiHome(snapshot) {
@@ -144,6 +162,50 @@ export function renderTuiHome(snapshot) {
 }
 
 /**
+ * @param {Awaited<ReturnType<typeof loadSnapshot>>} snapshot
+ * @param {{ runId: string, frame?: number, logTail?: string }} options
+ */
+export function renderTuiProcessing(snapshot, {
+  runId,
+  frame = 0,
+  logTail = ""
+}) {
+  const selected = snapshot.selectedRun;
+  const spinner = ["|", "/", "-", "\\"][frame % 4];
+  const session = selected && typeof selected.session === "object" && selected.session !== null
+    ? /** @type {Record<string, unknown>} */ (selected.session)
+    : {};
+  const pid = typeof session.pid === "number" ? String(session.pid) : "pending";
+  const status = selected ? `${selected.status}/${selected.phase}` : "starting";
+  const next = selected ? selected.nextAction : "waiting for run state";
+  const objective = selected ? selected.objective : runId;
+  const log = logTail.trim()
+    ? logTail.trim().split("\n").slice(-18).join("\n")
+    : "Waiting for agent output...";
+  return [
+    "Loop Agent Console",
+    "==================",
+    "",
+    `${spinner} Processing run`,
+    "",
+    `Run: ${runId}`,
+    `Status: ${status}`,
+    `Agent pid: ${pid}`,
+    `Objective: ${truncate(objective, 96)}`,
+    `Next: ${displayValue(next)}`,
+    "",
+    `Wiki: ${snapshot.notes.length} notes | Graph: ${snapshot.graph.nodes.length} nodes, ${snapshot.graph.edges.length} edges`,
+    "",
+    "Live Log",
+    "--------",
+    log,
+    "",
+    "The Loop is running in this terminal. Press Ctrl+C to stop watching.",
+    "When the agent exits, this screen opens the normal console."
+  ].join("\n");
+}
+
+/**
  * @param {NodeJS.WritableStream} output
  * @param {string} message
  */
@@ -172,7 +234,9 @@ function actionStatus(result, successMessage) {
  *   env?: NodeJS.ProcessEnv,
  *   openTargetImpl?: typeof openTarget,
  *   launchTerminalCommandImpl?: typeof launchTerminalCommand,
- *   serveWikiDashboardImpl?: typeof serveWikiDashboard
+ *   serveWikiDashboardImpl?: typeof serveWikiDashboard,
+ *   initialSelectedRunId?: string | null,
+ *   initialAgent?: "codex" | "claudecode"
  * }} [options]
  */
 export async function runLoopTui({
@@ -184,13 +248,15 @@ export async function runLoopTui({
   env = process.env,
   openTargetImpl = openTarget,
   launchTerminalCommandImpl = launchTerminalCommand,
-  serveWikiDashboardImpl = serveWikiDashboard
+  serveWikiDashboardImpl = serveWikiDashboard,
+  initialSelectedRunId = null,
+  initialAgent = "codex"
 } = {}) {
   if (!input.isTTY || !output.isTTY) {
     throw new Error("Loop Agent Console requires an interactive terminal.");
   }
-  let selectedRunId = /** @type {string | null} */ (null);
-  let agent = /** @type {"codex" | "claudecode"} */ ("codex");
+  let selectedRunId = /** @type {string | null} */ (initialSelectedRunId);
+  let agent = /** @type {"codex" | "claudecode"} */ (initialAgent);
   let showLogo = true;
   /** @type {import("node:http").Server | null} */
   let dashboardServer = null;
@@ -368,4 +434,105 @@ export async function runLoopTui({
       await new Promise((resolve) => dashboardServer?.close(resolve));
     }
   }
+}
+
+/**
+ * @param {{
+ *   stateDir?: string,
+ *   runId: string,
+ *   agent?: "codex" | "claudecode",
+ *   runPromise: Promise<unknown>,
+ *   input?: NodeJS.ReadableStream & { isTTY?: boolean },
+ *   output?: NodeJS.WritableStream & { isTTY?: boolean },
+ *   clearScreen?: boolean,
+ *   env?: NodeJS.ProcessEnv,
+ *   intervalMs?: number,
+ *   continueToConsole?: boolean
+ * }} options
+ */
+export async function runLoopProcessingTui({
+  stateDir = ".loop",
+  runId,
+  agent = "codex",
+  runPromise,
+  input = process.stdin,
+  output = process.stdout,
+  clearScreen = true,
+  env = process.env,
+  intervalMs = 900,
+  continueToConsole = true
+}) {
+  if (!input.isTTY || !output.isTTY) {
+    throw new Error("Loop Agent Console requires an interactive terminal.");
+  }
+  let frame = 0;
+  let settled = false;
+  /** @type {unknown} */
+  let settledValue;
+  /** @type {unknown} */
+  let settledError;
+  const watched = runPromise.then((value) => {
+    settled = true;
+    settledValue = value;
+  }, (error) => {
+    settled = true;
+    settledError = error;
+  });
+
+  while (!settled) {
+    const [snapshot, tail] = await Promise.all([
+      loadSnapshot({ stateDir, selectedRunId: runId, agent }),
+      readRunLogTailAction({ stateDir, id: runId, maxLines: 24 }).catch(() => ({ log: "" }))
+    ]);
+    if (clearScreen) {
+      output.write("\x1Bc");
+    }
+    output.write(`${renderTuiLogo({
+      color: shouldUseTuiColor({ isTTY: output.isTTY, env })
+    })}\n\n`);
+    output.write(renderTuiProcessing(snapshot, {
+      runId,
+      frame,
+      logTail: tail.log
+    }));
+    output.write("\n");
+    frame += 1;
+    await Promise.race([
+      watched,
+      new Promise((resolve) => setTimeout(resolve, intervalMs))
+    ]);
+  }
+
+  await watched;
+  if (settledError) {
+    throw settledError;
+  }
+
+  const [snapshot, tail] = await Promise.all([
+    loadSnapshot({ stateDir, selectedRunId: runId, agent }),
+    readRunLogTailAction({ stateDir, id: runId, maxLines: 24 }).catch(() => ({ log: "" }))
+  ]);
+  if (clearScreen) {
+    output.write("\x1Bc");
+  }
+  output.write(renderTuiProcessing(snapshot, {
+    runId,
+    frame,
+    logTail: tail.log
+  }));
+  output.write("\n\nAgent process exited. Opening Loop Agent Console...\n");
+
+  if (continueToConsole) {
+    await runLoopTui({
+      stateDir,
+      input,
+      output,
+      clearScreen,
+      env,
+      initialSelectedRunId: runId,
+      initialAgent: agent
+    });
+  }
+
+  return settledValue;
 }

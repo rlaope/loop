@@ -9,8 +9,11 @@ import { PassThrough } from "node:stream";
 
 import {
   createRunState,
+  directPromptTuiDispatch,
   noArgTuiDispatch,
   renderTuiHome,
+  renderTuiProcessing,
+  runLoopProcessingTui,
   runLoopTui,
   writeRunState,
   writeWikiForRunState
@@ -32,6 +35,24 @@ test("no-arg dispatch opens TUI only for interactive terminals", () => {
     stdinTTY: true,
     stdoutTTY: true
   }), "continue-cli");
+});
+
+test("direct prompt dispatch opens processing TUI only for interactive shorthand runs", () => {
+  assert.equal(directPromptTuiDispatch({
+    hasCommand: false,
+    stdinTTY: true,
+    stdoutTTY: true
+  }), "processing-tui");
+  assert.equal(directPromptTuiDispatch({
+    hasCommand: true,
+    stdinTTY: true,
+    stdoutTTY: true
+  }), "standard-run");
+  assert.equal(directPromptTuiDispatch({
+    hasCommand: false,
+    stdinTTY: false,
+    stdoutTTY: true
+  }), "standard-run");
 });
 
 test("TUI home render shows runs, wiki, graph, and commands", () => {
@@ -112,6 +133,46 @@ test("TUI home render shows runs, wiki, graph, and commands", () => {
   assert.match(html, /codex open terminal/);
 });
 
+test("TUI processing render summarizes active run and live log", () => {
+  const state = createRunState({
+    objective: "Improve dashboard observability",
+    now: new Date("2026-06-13T08:00:00.000Z")
+  });
+  const processing = renderTuiProcessing({
+    stateDir: ".loop",
+    agent: "codex",
+    selectedRunId: state.id,
+    selectedRun: {
+      ...state,
+      phase: "act",
+      nextAction: "run codex agent",
+      paths: {
+        jsonPath: ".loop/runs/run-1.json",
+        summaryPath: ".loop/runs/run-1.md",
+        logPath: ".loop/runs/run-1.log"
+      },
+      session: {
+        agent: "codex",
+        status: "running",
+        pid: 1234
+      },
+      lineage: undefined
+    },
+    runs: [],
+    notes: [],
+    graph: { nodes: [], edges: [] }
+  }, {
+    runId: state.id,
+    frame: 1,
+    logTail: "[loop] starting codex\nagent output"
+  });
+
+  assert.match(processing, /Processing run/);
+  assert.match(processing, /Agent pid: 1234/);
+  assert.match(processing, /Improve dashboard observability/);
+  assert.match(processing, /agent output/);
+});
+
 test("TUI one-shot mode renders local state without waiting for input", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "loop-tui-state-"));
   const state = createRunState({
@@ -142,6 +203,43 @@ test("TUI one-shot mode renders local state without waiting for input", async ()
   assert.match(text, /\.----->----\./);
   assert.match(text, /Loop Agent Console/);
   assert.match(text, /Render TUI objective/);
+});
+
+test("TUI processing mode follows a run promise without opening the command prompt", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-tui-processing-"));
+  const state = createRunState({
+    objective: "Processing TUI objective",
+    now: new Date("2026-06-13T08:00:00.000Z")
+  });
+  await writeRunState(state, { stateDir });
+  await writeWikiForRunState(state, { stateDir });
+  const input = /** @type {PassThrough & { isTTY?: boolean }} */ (new PassThrough());
+  const output = /** @type {PassThrough & { isTTY?: boolean }} */ (new PassThrough());
+  input.isTTY = true;
+  output.isTTY = true;
+  let text = "";
+  output.on("data", (chunk) => {
+    text += String(chunk);
+  });
+
+  const value = await runLoopProcessingTui({
+    stateDir,
+    runId: state.id,
+    agent: "codex",
+    runPromise: new Promise((resolve) => setTimeout(() => resolve("done"), 5)),
+    input,
+    output,
+    clearScreen: false,
+    intervalMs: 1,
+    continueToConsole: false,
+    env: { NO_COLOR: "1" }
+  });
+
+  assert.equal(value, "done");
+  assert.match(text, /Processing run/);
+  assert.match(text, /Processing TUI objective/);
+  assert.match(text, /Agent process exited/);
+  assert.doesNotMatch(text, /loop> /);
 });
 
 test("TUI init logo honors no-color terminal preferences", async () => {

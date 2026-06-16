@@ -5,6 +5,7 @@ import { existsSync, readFileSync, realpathSync, watchFile, unwatchFile } from "
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { Writable } from "node:stream";
 
 import {
   appendEvidence,
@@ -16,6 +17,7 @@ import {
   dashboardUrl,
   deleteRunState,
   deleteWikiNote,
+  directPromptTuiDispatch,
   doctorExitCode,
   getDashboardStatus,
   evaluatePolicyGate,
@@ -37,6 +39,7 @@ import {
   runLogPath,
   runAgentProcess,
   runDoctorChecks,
+  runLoopProcessingTui,
   runLoopTui,
   scriptPathFromImportMetaUrl,
   serveWikiDashboard,
@@ -790,9 +793,9 @@ function notifyLoopEvent(event, input, enabled) {
 }
 
 /**
- * @param {{ stateDir: string, explicitFlag: boolean, host: string, port: number }} options
+ * @param {{ stateDir: string, explicitFlag: boolean, host: string, port: number, askConsent?: boolean }} options
  */
-async function maybeStartDashboardForRun({ stateDir, explicitFlag, host, port }) {
+async function maybeStartDashboardForRun({ stateDir, explicitFlag, host, port, askConsent = true }) {
   const status = await getDashboardStatus({ host, port });
   if (status.occupied) {
     process.stderr.write(`Loop Wiki dashboard port ${port} is occupied by another service; not starting dashboard.\n`);
@@ -809,8 +812,8 @@ async function maybeStartDashboardForRun({ stateDir, explicitFlag, host, port })
   let consent = false;
   const initialAction = dashboardActionForRun({
     dashboardRunning: false,
-    stdinTTY: Boolean(process.stdin.isTTY),
-    stdoutTTY: Boolean(process.stdout.isTTY),
+    stdinTTY: askConsent && Boolean(process.stdin.isTTY),
+    stdoutTTY: askConsent && Boolean(process.stdout.isTTY),
     explicitFlag
   });
   let action = initialAction;
@@ -859,6 +862,7 @@ async function maybeStartDashboardForRun({ stateDir, explicitFlag, host, port })
  * @param {string | undefined} options.parentRunId
  * @param {"tui" | "dashboard" | "cli" | undefined} options.lineageSource
  * @param {boolean} options.notificationsEnabled
+ * @param {boolean} options.processingTui
  */
 async function runAgent({
   agent,
@@ -875,7 +879,8 @@ async function runAgent({
   dashboardPort: port,
   parentRunId,
   lineageSource,
-  notificationsEnabled
+  notificationsEnabled,
+  processingTui
 }) {
   try {
     ensureProjectBoundary({ writeMode, expectedRoot });
@@ -940,16 +945,24 @@ async function runAgent({
     stateDir,
     explicitFlag: wikiDashboard,
     host,
-    port
+    port,
+    askConsent: !processingTui
   });
 
   const prompt = buildAgentPrompt(objective, { writeMode });
   const command = agentCommand(agent, prompt, writeMode);
   const url = dashboardUrl({ host, port });
-  const result = await runAgentProcess(command, {
+  const silentStream = new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    }
+  });
+  const runPromise = runAgentProcess(command, {
     agent,
     state,
     stateDir,
+    stdout: processingTui ? silentStream : process.stdout,
+    stderr: processingTui ? silentStream : process.stderr,
     onStarted: async (runningState, runningPaths) => {
       await writeWikiOrExit(runningState, runningPaths, { stateDir, context: "running agent session" });
       notifyLoopEvent("run-started", {
@@ -958,11 +971,24 @@ async function runAgent({
         runId: runningState.id,
         objective
       }, notificationsEnabled);
-      process.stderr.write(`Loop agent session: ${runningState.id}\n`);
-      process.stderr.write(`Loop agent log: ${runLogPath({ stateDir, id: runningState.id })}\n`);
-      process.stderr.write("Inspect from another terminal: loop status | loop runs | loop logs --follow\n");
+      if (!processingTui) {
+        process.stderr.write(`Loop agent session: ${runningState.id}\n`);
+        process.stderr.write(`Loop agent log: ${runLogPath({ stateDir, id: runningState.id })}\n`);
+        process.stderr.write("Inspect from another terminal: loop status | loop runs | loop logs --follow\n");
+      }
     }
   });
+  const result = /** @type {Awaited<ReturnType<typeof runAgentProcess>>} */ (processingTui
+    ? await runLoopProcessingTui({
+        stateDir,
+        runId: state.id,
+        agent,
+        runPromise,
+        input: process.stdin,
+        output: process.stdout,
+        continueToConsole: false
+      })
+    : await runPromise);
 
   if (result.error) {
     const failed = transitionRunState(appendEvidence(result.state, {
@@ -980,7 +1006,16 @@ async function runAgent({
       runId: failed.id,
       objective
     }, notificationsEnabled);
-    process.stderr.write(`${agent} agent failed to start: ${result.error.message}\n`);
+    if (!processingTui) {
+      process.stderr.write(`${agent} agent failed to start: ${result.error.message}\n`);
+    }
+    if (processingTui) {
+      await runLoopTui({
+        stateDir,
+        initialSelectedRunId: failed.id,
+        initialAgent: agent
+      });
+    }
     process.exit(5);
   }
 
@@ -1011,6 +1046,15 @@ async function runAgent({
     runId: finalState.id,
     objective
   }, notificationsEnabled);
+
+  if (processingTui) {
+    await runLoopTui({
+      stateDir,
+      initialSelectedRunId: finalState.id,
+      initialAgent: agent
+    });
+    process.exit(exitCode);
+  }
 
   process.stdout.write(`${JSON.stringify({
     ok: exitCode === 0,
@@ -1121,6 +1165,11 @@ if (!objective) {
 }
 
 const isRunMode = command === "run" || has("--agent") || !command;
+const directPromptAction = directPromptTuiDispatch({
+  hasCommand: Boolean(command),
+  stdinTTY: Boolean(process.stdin.isTTY),
+  stdoutTTY: Boolean(process.stdout.isTTY)
+});
 
 if (has("--dry-run")) {
   let expectedRoot;
@@ -1231,7 +1280,8 @@ if (isRunMode) {
     dashboardPort: port,
     parentRunId,
     lineageSource,
-    notificationsEnabled: !has("--no-notify")
+    notificationsEnabled: !has("--no-notify"),
+    processingTui: directPromptAction === "processing-tui"
   });
 }
 
