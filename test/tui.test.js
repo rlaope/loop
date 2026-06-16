@@ -146,9 +146,14 @@ test("TUI home render shows prompt console panels, status, runs, and action butt
   assert.match(html, /Harness Status/);
   assert.match(html, /Agent: codex/);
   assert.match(html, /Wiki dashboard: online/);
+  assert.match(html, /Phase: intake>plan>act>\[verify\]>stop/);
   assert.match(html, /Build a darkwear/);
   assert.match(html, /Action Bar/);
+  assert.match(html, /Primary \[ Enter Send Prompt \]/);
+  assert.match(html, /Review\s+\[ W Wiki \]/);
+  assert.match(html, /System\s+\[ 1-9 Select \]/);
   assert.match(html, /X Codex/);
+  assert.match(html, /Last Event/);
 });
 
 test("TUI home render distinguishes unknown wiki dashboard status from blocked", () => {
@@ -173,7 +178,7 @@ test("TUI home render distinguishes unknown wiki dashboard status from blocked",
 
   assert.match(html, /Wiki dashboard: unknown/);
   assert.doesNotMatch(html, /Wiki dashboard: blocked/);
-  assert.match(html, /New Loop objective/);
+  assert.match(html, /new Loop objective/i);
 });
 
 test("TUI snapshot normalizes uncertain dashboard probe occupation as unknown", async () => {
@@ -243,7 +248,8 @@ test("TUI processing render summarizes active run and live log", () => {
   assert.match(processing, /Processing live agent run/);
   assert.match(processing, /Harness Status/);
   assert.match(processing, /Wiki dashboard: off/);
-  assert.match(processing, /Agent pid: 1234/);
+  assert.match(processing, /PID: 1234/);
+  assert.match(processing, /Phase: intake>plan>\[act\]>verify>stop/);
   assert.match(processing, /Improve dashboard observability/);
   assert.match(processing, /agent output/);
 });

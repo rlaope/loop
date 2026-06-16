@@ -8,6 +8,7 @@ const RESET = "\x1b[0m";
 const DEFAULT_WIDTH = 92;
 const MIN_WIDTH = 72;
 const MAX_WIDTH = 120;
+const PHASES = ["intake", "plan", "act", "verify", "stop"];
 const LOOP_LOGO_LINES = [
   " _      ___   ___  ____ ",
   "| |    / _ \\ / _ \\|  _ \\",
@@ -207,6 +208,22 @@ function renderButton(label, { color = false, active = false } = {}) {
 }
 
 /**
+ * @param {string} label
+ * @param {string} value
+ * @param {{ color?: boolean, tone?: "hot" | "warm" | "good" | "muted" }} [options]
+ */
+function renderPill(label, value, { color = false, tone = "warm" } = {}) {
+  const code = tone === "good"
+    ? GREEN
+    : tone === "hot"
+      ? RED
+      : tone === "muted"
+        ? MUTED
+        : DIM_YELLOW;
+  return colorize(`${label}: ${value}`, code, color);
+}
+
+/**
  * @param {string[]} leftLines
  * @param {string[]} rightLines
  * @param {{ color?: boolean, width?: number }} [options]
@@ -227,6 +244,62 @@ function renderSplitPanels(leftLines, rightLines, { color = false, width } = {})
  */
 function truncate(value, maxLength) {
   return value.length <= maxLength ? value : `${value.slice(0, maxLength - 3)}...`;
+}
+
+/**
+ * @param {string} value
+ * @param {number} width
+ */
+function truncateVisible(value, width) {
+  if (visibleWidth(value) <= width) {
+    return value;
+  }
+  let fitted = "";
+  let used = 0;
+  for (const character of value) {
+    const next = characterWidth(character);
+    if (used + next > width - 3) {
+      break;
+    }
+    fitted += character;
+    used += next;
+  }
+  return `${fitted}...`;
+}
+
+/** @param {string} id */
+function compactId(id) {
+  if (id.length <= 24) {
+    return id;
+  }
+  return `${id.slice(0, 10)}...${id.slice(-8)}`;
+}
+
+/**
+ * @param {string | undefined} status
+ */
+function statusTone(status) {
+  if (status === "complete" || status === "completed") {
+    return "good";
+  }
+  if (status === "failed" || status === "blocked") {
+    return "hot";
+  }
+  return "warm";
+}
+
+/**
+ * @param {string | undefined} phase
+ * @param {{ color?: boolean }} [options]
+ */
+function renderPhaseRail(phase, { color = false } = {}) {
+  const current = phase && PHASES.includes(phase) ? phase : null;
+  return PHASES.map((item) => {
+    if (item === current) {
+      return colorize(`[${item}]`, YELLOW, color);
+    }
+    return colorize(item, MUTED, color);
+  }).join(">");
 }
 
 /**
@@ -327,64 +400,98 @@ export function normalizeTuiAction(value) {
  */
 export function renderTuiHome(snapshot, { color = false, width } = {}) {
   const layout = layoutForWidth(width);
-  const objectiveWidth = Math.max(14, layout.paneWidth - 25);
+  const objectiveWidth = Math.max(10, layout.paneWidth - 30);
   const runRows = snapshot.runs.length === 0
     ? [
-        "No runs yet.",
-        "Type an objective in the prompt below, then press Enter."
+        "Ready for the first Loop run.",
+        "Prompt input starts a new objective."
       ]
     : snapshot.runs.slice(0, 8).map((run, index) => {
-        const marker = run.id === snapshot.selectedRunId ? ">" : " ";
-        const status = `${run.status}/${run.phase}`;
-        return `${marker} ${index + 1}  ${padVisible(status, 15)} ${truncate(run.objective, objectiveWidth)}`;
+        const marker = run.id === snapshot.selectedRunId
+          ? colorize(">", YELLOW, color)
+          : colorize(" ", MUTED, color);
+        const status = renderPill(run.status.toUpperCase(), run.phase, {
+          color,
+          tone: statusTone(run.status)
+        });
+        const objective = truncateVisible(run.objective, objectiveWidth);
+        return `${marker} ${index + 1}  ${padVisible(status, 18)} ${objective}`;
       });
   const selectedLines = snapshot.selectedRun
     ? [
-        `Run: ${snapshot.selectedRun.id}`,
-        `Status: ${snapshot.selectedRun.status}/${snapshot.selectedRun.phase}`,
+        `${renderPill("Run", compactId(snapshot.selectedRun.id), { color, tone: "muted" })}`,
+        `${renderPill("Status", `${snapshot.selectedRun.status}/${snapshot.selectedRun.phase}`, {
+          color,
+          tone: statusTone(snapshot.selectedRun.status)
+        })}`,
+        `Phase: ${renderPhaseRail(snapshot.selectedRun.phase, { color })}`,
         `Objective: ${snapshot.selectedRun.objective}`,
-        `Next: ${displayValue(snapshot.selectedRun.nextAction)}`,
-        `Log: loop logs ${snapshot.selectedRun.id} --follow`
+        `${colorize("Next:", YELLOW, color)} ${displayValue(snapshot.selectedRun.nextAction)}`,
+        "Inspect: L Logs / W Wiki / X Codex"
       ]
     : [
         "No run selected.",
-        "Free text prepares a new Loop run.",
-        "Use 1-9 after runs exist."
+        "Prompt mode: new objective.",
+        "Recent runs will appear on the left."
       ];
   const wikiStatus = wikiDashboardLabel(snapshot.dashboard);
-  const selectedHint = snapshot.selectedRunId ? `selected ${snapshot.selectedRunId}` : "no selected run";
+  const selectedHint = snapshot.selectedRunId ? compactId(snapshot.selectedRunId) : "new objective";
   const promptLines = [
-    snapshot.selectedRunId ? "Connected follow-up prompt" : "New Loop objective",
-    `${colorize("Prompt ›", YELLOW, color)}`
+    snapshot.selectedRunId
+      ? `Follow-up target: ${selectedHint}`
+      : "Mode: new Loop objective",
+    snapshot.selectedRun
+      ? `Current next action: ${displayValue(snapshot.selectedRun.nextAction)}`
+      : "Enter a goal and Loop will prepare the run.",
+    "",
+    `${colorize("Prompt ›", YELLOW, color)} ${colorize("write the objective here", MUTED, color)}`
   ];
   const statusColor = wikiStatus === "online" ? GREEN : DIM_YELLOW;
   const harnessLines = [
-    `Agent: ${colorize(snapshot.agent, YELLOW, color)}   Wiki dashboard: ${colorize(wikiStatus, statusColor, color)}   ${selectedHint}`,
-    `State: ${snapshot.stateDir}   Wiki URL: ${snapshot.dashboard.url}   Runs: ${snapshot.runs.length}   Notes: ${snapshot.notes.length}`
+    [
+      renderPill("Agent", snapshot.agent, { color }),
+      renderPill("Wiki dashboard", wikiStatus, {
+        color,
+        tone: wikiStatus === "online" ? "good" : wikiStatus === "blocked" ? "hot" : "warm"
+      }),
+      renderPill("Selected", selectedHint, { color, tone: snapshot.selectedRunId ? "warm" : "muted" })
+    ].join("   "),
+    [
+      renderPill("Runs", String(snapshot.runs.length), { color, tone: "muted" }),
+      renderPill("Notes", String(snapshot.notes.length), { color, tone: "muted" }),
+      renderPill("Graph", `${snapshot.graph.nodes.length}/${snapshot.graph.edges.length}`, { color, tone: "muted" }),
+      `Dashboard ${snapshot.dashboard.url}`
+    ].join("   ")
   ];
   const actionLines = [
     [
-      renderButton("1-9 Select", { color }),
-      renderButton("L Logs", { color }),
-      renderButton("W Wiki", { color }),
+      colorize("Primary", DIM_YELLOW, color),
+      renderButton("Enter Send Prompt", { color, active: true }),
       renderButton("D Dashboard", { color, active: wikiStatus === "online" }),
-      renderButton("A Agent", { color })
+      renderButton("L Logs", { color }),
+      renderButton("X Codex", { color })
     ].join(" "),
     [
+      colorize("Review ", DIM_YELLOW, color),
+      renderButton("W Wiki", { color }),
       renderButton("N Note", { color }),
       renderButton("V Verify", { color }),
-      renderButton("F Follow-up", { color }),
+      renderButton("F Follow-up", { color })
+    ].join(" "),
+    [
+      colorize("System ", DIM_YELLOW, color),
+      renderButton("1-9 Select", { color }),
+      renderButton("A Agent", { color }),
       renderButton("C Complete", { color }),
-      renderButton("X Codex", { color }),
       renderButton("Q Quit", { color })
     ].join(" ")
   ];
   const notice = snapshot.notice
-    ? renderBox("Console Feed", [snapshot.notice], { width: layout.frameWidth, color, dim: true })
+    ? renderBox("Last Event", [snapshot.notice], { width: layout.frameWidth, color, dim: true })
     : "";
   const sections = [
-    colorize("Loop Prompt Console", YELLOW, color),
-    colorize("Claude Code-style harness for Loop Engineering", DIM_YELLOW, color),
+    colorize("LOOP  Prompt Console", YELLOW, color),
+    colorize("Loop Prompt Console · Goal-driven agent harness", DIM_YELLOW, color),
     "",
     renderBox("Prompt", promptLines, { width: layout.frameWidth, color }),
     "",
@@ -397,7 +504,7 @@ export function renderTuiHome(snapshot, { color = false, width } = {}) {
   if (notice) {
     sections.push("", notice);
   }
-  sections.push("", colorize(`Graph: ${snapshot.graph.nodes.length} nodes, ${snapshot.graph.edges.length} edges`, MUTED, color), "");
+  sections.push("", colorize("Enter submits prompt text. Lettered buttons trigger the visible actions.", MUTED, color), "");
   return sections.join("\n");
 }
 
@@ -438,27 +545,38 @@ export function renderTuiProcessing(snapshot, {
   const statusColor = wikiStatus === "online" ? GREEN : DIM_YELLOW;
   const logLines = log.split("\n").slice(-18);
   return [
-    colorize("Loop Prompt Console", YELLOW, color),
-    colorize("Processing live agent run", DIM_YELLOW, color),
+    colorize("LOOP  Processing Console", YELLOW, color),
+    colorize("Processing live agent run · Live agent harness", DIM_YELLOW, color),
     "",
     renderBox("Prompt", [
-      `${spinner} Agent is processing the current Loop objective.`,
-      `Objective: ${truncate(objective, Math.max(40, layout.frameWidth - 16))}`,
+      `${colorize(spinner, YELLOW, color)} Agent is working on the current Loop objective.`,
+      `Objective: ${truncateVisible(objective, Math.max(40, layout.frameWidth - 16))}`,
+      `Phase: ${selected ? renderPhaseRail(selected.phase, { color }) : colorize("starting", MUTED, color)}`,
       "",
-      `${colorize("Prompt ›", YELLOW, color)} locked while the agent is running`
+      `${colorize("Prompt ›", YELLOW, color)} ${colorize("locked until this run exits", MUTED, color)}`
     ], { width: layout.frameWidth, color }),
     "",
     renderBox("Harness Status", [
-      `Agent: ${colorize(snapshot.agent, YELLOW, color)}   Agent pid: ${pid}   Wiki dashboard: ${colorize(wikiStatus, statusColor, color)}`,
-      `Run: ${runId}`,
-      `Status: ${status}   Next: ${displayValue(next)}`,
-      `Wiki: ${snapshot.notes.length} notes   Graph: ${snapshot.graph.nodes.length} nodes, ${snapshot.graph.edges.length} edges`
+      [
+        renderPill("Agent", snapshot.agent, { color }),
+        renderPill("PID", pid, { color, tone: pid === "pending" ? "muted" : "warm" }),
+        renderPill("Wiki dashboard", wikiStatus, {
+          color,
+          tone: wikiStatus === "online" ? "good" : wikiStatus === "blocked" ? "hot" : "warm"
+        })
+      ].join("   "),
+      `${renderPill("Run", compactId(runId), { color, tone: "muted" })}   ${renderPill("Status", status, {
+        color,
+        tone: selected ? statusTone(selected.status) : "warm"
+      })}`,
+      `${colorize("Next:", YELLOW, color)} ${displayValue(next)}`,
+      `${renderPill("Wiki", `${snapshot.notes.length} notes`, { color, tone: "muted" })}   ${renderPill("Graph", `${snapshot.graph.nodes.length}/${snapshot.graph.edges.length}`, { color, tone: "muted" })}`
     ], { width: layout.frameWidth, color, dim: true }),
     "",
     renderBox("Live Log", logLines, { width: layout.frameWidth, color, dim: true }),
     "",
-    colorize("The Loop is running in this terminal. Ctrl+C stops watching; the agent log remains on disk.", MUTED, color),
-    colorize("When the agent exits, this screen opens the normal prompt console.", MUTED, color)
+    colorize("Ctrl+C stops watching only; the run log remains on disk.", MUTED, color),
+    colorize("When the agent exits, Loop returns here as a prompt console.", MUTED, color)
   ].join("\n");
 }
 
