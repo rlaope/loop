@@ -3,7 +3,7 @@
 | Surface | MVP behavior | Notes |
 | --- | --- | --- |
 | Codex `$loop` / `$Loop` | Shipped first. | `$loop <objective>` and the display-case `$Loop <objective>` map to the Codex skill in `skills/loop/SKILL.md`. |
-| Loop Agent Console TUI | Shipped local baseline. | `loop` with no arguments opens a terminal console for run selection, wiki/log reading, verification notes, lineage-preserving follow-up intent, dashboard open, and Codex resume actions when a session id is known. |
+| Loop Agent Console TUI | Shipped keyboard-first baseline. | `loop` with no arguments opens a terminal console with Tab/arrow focus navigation, Enter-opened run pickers and action menus, confirmation overlays for completion/Codex launch, two-field note input, wiki/log reading, lineage-preserving follow-up intent, dashboard open, and Codex resume actions when a session id is known. |
 | Loop CLI Codex agent | Prototype. | `loop run --agent codex "prompt"` launches `codex exec` after Loop state and safety checks. |
 | Loop CLI Claude Code agent | Prototype. | `loop run --agent claudecode "prompt"` launches `claude --print` after Loop state and safety checks. |
 | Loop Wiki CLI | Shipped local baseline. | `loop wiki list/read/open/serve` reads `.loop/wiki` notes and serves a localhost dashboard. |

@@ -1,3 +1,5 @@
+import { TUI_ACTIONS } from "./tui-actions.js";
+
 const RED = "\x1b[38;5;167m";
 const DIM_RED = "\x1b[38;5;88m";
 const YELLOW = "\x1b[38;5;220m";
@@ -8,34 +10,8 @@ const RESET = "\x1b[0m";
 const DEFAULT_WIDTH = 92;
 const MIN_WIDTH = 72;
 const MAX_WIDTH = 120;
+const RUN_PICKER_VISIBLE_LIMIT = 12;
 const PHASES = ["intake", "plan", "act", "verify", "stop"];
-const TUI_ACTION_ALIASES = new Map([
-  ["l", "logs"],
-  ["log", "logs"],
-  ["logs", "logs"],
-  ["w", "wiki"],
-  ["wiki", "wiki"],
-  ["d", "dashboard"],
-  ["dash", "dashboard"],
-  ["dashboard", "dashboard"],
-  ["a", "agent"],
-  ["agent", "agent"],
-  ["n", "note"],
-  ["note", "note"],
-  ["v", "verify"],
-  ["verify", "verify"],
-  ["c", "complete"],
-  ["complete", "complete"],
-  ["f", "follow"],
-  ["follow", "follow"],
-  ["x", "codex"],
-  ["codex", "codex"],
-  ["r", "refresh"],
-  ["refresh", "refresh"],
-  ["q", "quit"],
-  ["quit", "quit"],
-  ["exit", "quit"]
-]);
 const LOOP_LOGO_LINES = [
   " _      ___   ___  ____ ",
   "| |    / _ \\ / _ \\|  _ \\",
@@ -206,11 +182,11 @@ function padVisible(value, width) {
 /**
  * @param {string} title
  * @param {string[]} lines
- * @param {{ width?: number, color?: boolean, dim?: boolean }} [options]
+ * @param {{ width?: number, color?: boolean, dim?: boolean, focused?: boolean }} [options]
  */
-function renderBox(title, lines, { width = DEFAULT_WIDTH, color = false, dim = false } = {}) {
-  const label = title ? ` ${title} ` : "";
-  const borderCode = dim ? DIM_YELLOW : YELLOW;
+function renderBox(title, lines, { width = DEFAULT_WIDTH, color = false, dim = false, focused = false } = {}) {
+  const label = title ? ` ${focused ? "▶ " : ""}${title} ` : "";
+  const borderCode = focused ? RED : dim ? DIM_YELLOW : YELLOW;
   const top = `╭${label}${"─".repeat(Math.max(0, width - visibleWidth(label) - 2))}╮`;
   const bottom = `╰${"─".repeat(Math.max(0, width - 2))}╯`;
   const contentWidth = width - 4;
@@ -253,12 +229,12 @@ function renderPill(label, value, { color = false, tone = "warm" } = {}) {
 /**
  * @param {string[]} leftLines
  * @param {string[]} rightLines
- * @param {{ color?: boolean, width?: number }} [options]
+ * @param {{ color?: boolean, width?: number, leftFocused?: boolean, rightFocused?: boolean }} [options]
  */
-function renderSplitPanels(leftLines, rightLines, { color = false, width } = {}) {
+function renderSplitPanels(leftLines, rightLines, { color = false, width, leftFocused = false, rightFocused = false } = {}) {
   const layout = layoutForWidth(width);
-  const left = renderBox("Run Stack", leftLines, { width: layout.paneWidth, color }).split("\n");
-  const right = renderBox("Selected Run", rightLines, { width: layout.paneWidth, color }).split("\n");
+  const left = renderBox("Run Stack", leftLines, { width: layout.paneWidth, color, focused: leftFocused }).split("\n");
+  const right = renderBox("Selected Run", rightLines, { width: layout.paneWidth, color, focused: rightFocused }).split("\n");
   const rows = Math.max(left.length, right.length);
   return Array.from({ length: rows }, (_, index) => {
     return `${padVisible(left[index] ?? "", layout.paneWidth)}${" ".repeat(layout.gap)}${right[index] ?? ""}`;
@@ -379,10 +355,176 @@ function wikiDashboardLabel(dashboard) {
   return "off";
 }
 
-/** @param {string} value */
-export function normalizeTuiAction(value) {
-  const lower = value.trim().toLowerCase();
-  return TUI_ACTION_ALIASES.get(lower) ?? null;
+/**
+ * @param {unknown} value
+ */
+function textValue(value) {
+  return typeof value === "string" ? value : "";
+}
+
+/**
+ * @param {unknown} model
+ * @returns {model is {
+ *   focusRegion: string,
+ *   selectedRunIndex: number,
+ *   selectedActionIndex: number,
+ *   promptBuffer: string,
+ *   promptMode: boolean,
+ *   overlay: string | null,
+ *   overlayIndex: number,
+ *   overlayFieldIndex: number,
+ *   overlayData: Record<string, unknown>
+ * }}
+ */
+function hasTuiModel(model) {
+  return typeof model === "object" && model !== null && "focusRegion" in model && "selectedRunIndex" in model;
+}
+
+/**
+ * @param {number} index
+ * @param {number} selected
+ * @param {{ color?: boolean }} [options]
+ */
+function rowCursor(index, selected, { color = false } = {}) {
+  return index === selected ? colorize("›", RED, color) : colorize(" ", MUTED, color);
+}
+
+/**
+ * @param {object} snapshot
+ * @param {Array<Record<string, unknown> & { id: string, status: string, phase: string, objective: string }>} snapshot.runs
+ * @param {Array<unknown>} snapshot.notes
+ * @param {{
+ *   overlay: string | null,
+ *   overlayIndex: number,
+ *   overlayFieldIndex: number,
+ *   overlayData: Record<string, unknown>
+ * }} model
+ * @param {{ color?: boolean, width?: number }} [options]
+ */
+function renderOverlay(snapshot, model, { color = false, width } = {}) {
+  if (!model.overlay) {
+    return "";
+  }
+  const layout = layoutForWidth(width);
+  const overlayWidth = Math.min(layout.frameWidth, 88);
+  if (model.overlay === "runPicker") {
+    const selectedIndex = Math.max(0, Math.min(model.overlayIndex, Math.max(0, snapshot.runs.length - 1)));
+    const start = Math.max(0, Math.min(
+      selectedIndex - Math.floor(RUN_PICKER_VISIBLE_LIMIT / 2),
+      Math.max(0, snapshot.runs.length - RUN_PICKER_VISIBLE_LIMIT)
+    ));
+    const visibleRuns = snapshot.runs.slice(start, start + RUN_PICKER_VISIBLE_LIMIT);
+    const rows = snapshot.runs.length
+      ? visibleRuns.map((run, offset) => {
+          const index = start + offset;
+          const status = `${run.status}/${run.phase}`;
+          return `${rowCursor(index, model.overlayIndex, { color })} ${index + 1}. ${padVisible(status, 17)} ${truncateVisible(run.objective, overlayWidth - 28)}`;
+        })
+      : ["No runs yet."];
+    return renderBox("Run Picker", [
+      "Choose a run with ↑/↓, then press Enter.",
+      snapshot.runs.length > RUN_PICKER_VISIBLE_LIMIT
+        ? `Showing ${start + 1}-${start + visibleRuns.length} of ${snapshot.runs.length}.`
+        : "",
+      "",
+      ...rows
+    ], { width: overlayWidth, color, focused: true });
+  }
+  if (model.overlay === "actionMenu") {
+    const rows = TUI_ACTIONS.map((action, index) => {
+      const confirm = action.confirm ? "  confirm" : "";
+      return `${rowCursor(index, model.overlayIndex, { color })} ${padVisible(action.label, 12)} ${action.runRequired ? "run" : "global"}${confirm}`;
+    });
+    return renderBox("Action Menu", [
+      "Choose an action with ↑/↓. Enter opens the selected action.",
+      "",
+      ...rows
+    ], { width: overlayWidth, color, focused: true });
+  }
+  if (model.overlay === "agentPicker") {
+    const agents = Array.isArray(model.overlayData.agents) ? model.overlayData.agents : ["codex", "claudecode"];
+    return renderBox("Agent Picker", [
+      "Select the agent for prepared Loop commands.",
+      "",
+      ...agents.map((agent, index) => `${rowCursor(index, model.overlayIndex, { color })} ${String(agent)}`)
+    ], { width: overlayWidth, color, focused: true });
+  }
+  if (model.overlay === "confirmComplete") {
+    return renderBox("Confirm Complete", [
+      "Mark the selected run complete?",
+      "This records completion evidence and updates the run state.",
+      "",
+      `${rowCursor(0, model.overlayIndex, { color })} Confirm`,
+      `${rowCursor(1, model.overlayIndex, { color })} Cancel`
+    ], { width: overlayWidth, color, focused: true });
+  }
+  if (model.overlay === "confirmCodex") {
+    return renderBox("Confirm Codex", [
+      "Open a Codex resume terminal for the selected run?",
+      "Loop will launch only after this explicit confirmation.",
+      "",
+      `${rowCursor(0, model.overlayIndex, { color })} Confirm`,
+      `${rowCursor(1, model.overlayIndex, { color })} Cancel`
+    ], { width: overlayWidth, color, focused: true });
+  }
+  if (model.overlay === "noteInput") {
+    const title = textValue(model.overlayData.title);
+    const body = textValue(model.overlayData.body);
+    const validation = textValue(model.overlayData.validation);
+    return renderBox("Add Note", [
+      "Title and body are both required.",
+      "",
+      `${rowCursor(0, model.overlayFieldIndex, { color })} Title: ${title || colorize("empty", MUTED, color)}`,
+      `${rowCursor(1, model.overlayFieldIndex, { color })} Body: ${body || colorize("empty", MUTED, color)}`,
+      "",
+      `${rowCursor(2, model.overlayFieldIndex, { color })} Add note`,
+      `${rowCursor(3, model.overlayFieldIndex, { color })} Cancel`,
+      ...(validation ? ["", colorize(validation, RED, color)] : [])
+    ], { width: overlayWidth, color, focused: true });
+  }
+  if (model.overlay === "verifyInput") {
+    const summary = textValue(model.overlayData.summary);
+    const validation = textValue(model.overlayData.validation);
+    return renderBox("Verification Evidence", [
+      "Write the evidence summary.",
+      "",
+      `${rowCursor(0, model.overlayFieldIndex, { color })} Summary: ${summary || colorize("empty", MUTED, color)}`,
+      "",
+      `${rowCursor(1, model.overlayFieldIndex, { color })} Save evidence`,
+      `${rowCursor(2, model.overlayFieldIndex, { color })} Cancel`,
+      ...(validation ? ["", colorize(validation, RED, color)] : [])
+    ], { width: overlayWidth, color, focused: true });
+  }
+  if (model.overlay === "followUpInput") {
+    const prompt = textValue(model.overlayData.prompt);
+    const validation = textValue(model.overlayData.validation);
+    return renderBox("Follow-up Objective", [
+      "Prepare a connected Loop command for the selected run.",
+      "",
+      `${rowCursor(0, model.overlayFieldIndex, { color })} Prompt: ${prompt || colorize("empty", MUTED, color)}`,
+      "",
+      `${rowCursor(1, model.overlayFieldIndex, { color })} Prepare`,
+      `${rowCursor(2, model.overlayFieldIndex, { color })} Cancel`,
+      ...(validation ? ["", colorize(validation, RED, color)] : [])
+    ], { width: overlayWidth, color, focused: true });
+  }
+  if (model.overlay === "logPreview") {
+    const lines = Array.isArray(model.overlayData.lines) ? model.overlayData.lines.map(String) : ["No log output recorded yet."];
+    return renderBox("Log Preview", [
+      "Esc returns to the console.",
+      "",
+      ...lines.slice(-18)
+    ], { width: overlayWidth, color, focused: true });
+  }
+  if (model.overlay === "wikiList") {
+    const lines = Array.isArray(model.overlayData.lines) ? model.overlayData.lines.map(String) : ["No wiki notes."];
+    return renderBox("Wiki Notes", [
+      "Esc returns to the console.",
+      "",
+      ...lines.slice(0, 18)
+    ], { width: overlayWidth, color, focused: true });
+  }
+  return "";
 }
 
 /**
@@ -396,19 +538,22 @@ export function normalizeTuiAction(value) {
  * @param {string} snapshot.notice
  * @param {string | null} snapshot.selectedRunId
  * @param {(Record<string, unknown> & { id: string, status: string, phase: string, objective: string, nextAction?: string }) | null} snapshot.selectedRun
- * @param {{ color?: boolean, width?: number }} [options]
+ * @param {{ color?: boolean, width?: number, model?: unknown }} [options]
  */
-export function renderTuiHome(snapshot, { color = false, width } = {}) {
+export function renderTuiHome(snapshot, { color = false, width, model = null } = {}) {
   const layout = layoutForWidth(width);
   const objectiveWidth = Math.max(10, layout.paneWidth - 30);
+  const tuiModel = hasTuiModel(model) ? model : null;
+  const focused = /** @param {string} region */ (region) => tuiModel?.focusRegion === region && !tuiModel.overlay;
+  const selectedRunIndex = tuiModel?.selectedRunIndex ?? snapshot.runs.findIndex((run) => run.id === snapshot.selectedRunId);
   const runRows = snapshot.runs.length === 0
     ? [
         "Ready for the first Loop run.",
         "Prompt input starts a new objective."
       ]
     : snapshot.runs.slice(0, 8).map((run, index) => {
-        const marker = run.id === snapshot.selectedRunId
-          ? colorize(">", YELLOW, color)
+        const marker = index === selectedRunIndex
+          ? colorize(focused("runs") ? "›" : ">", focused("runs") ? RED : YELLOW, color)
           : colorize(" ", MUTED, color);
         const status = renderPill(run.status.toUpperCase(), run.phase, {
           color,
@@ -427,7 +572,7 @@ export function renderTuiHome(snapshot, { color = false, width } = {}) {
         `Phase: ${renderPhaseRail(snapshot.selectedRun.phase, { color })}`,
         `Objective: ${snapshot.selectedRun.objective}`,
         `${colorize("Next:", YELLOW, color)} ${displayValue(snapshot.selectedRun.nextAction)}`,
-        "Inspect: L Logs / W Wiki / X Codex"
+        "Enter opens actions for this run."
       ]
     : [
         "No run selected.",
@@ -436,6 +581,7 @@ export function renderTuiHome(snapshot, { color = false, width } = {}) {
       ];
   const wikiStatus = wikiDashboardLabel(snapshot.dashboard);
   const selectedHint = snapshot.selectedRunId ? compactId(snapshot.selectedRunId) : "new objective";
+  const promptBuffer = tuiModel?.promptBuffer ?? "";
   const promptLines = [
     snapshot.selectedRunId
       ? `Follow-up target: ${selectedHint}`
@@ -444,9 +590,12 @@ export function renderTuiHome(snapshot, { color = false, width } = {}) {
       ? `Current next action: ${displayValue(snapshot.selectedRun.nextAction)}`
       : "Enter a goal and Loop will prepare the run.",
     "",
-    `${colorize("Prompt ›", YELLOW, color)} ${colorize("write the objective here", MUTED, color)}`
+    `${colorize("Prompt ›", focused("prompt") ? RED : YELLOW, color)} ${
+      promptBuffer
+        ? truncateVisible(promptBuffer, layout.frameWidth - 15)
+        : colorize("type an objective, or Tab to navigate", MUTED, color)
+    }`
   ];
-  const statusColor = wikiStatus === "online" ? GREEN : DIM_YELLOW;
   const harnessLines = [
     [
       renderPill("Agent", snapshot.agent, { color }),
@@ -460,31 +609,24 @@ export function renderTuiHome(snapshot, { color = false, width } = {}) {
       renderPill("Runs", String(snapshot.runs.length), { color, tone: "muted" }),
       renderPill("Notes", String(snapshot.notes.length), { color, tone: "muted" }),
       renderPill("Graph", `${snapshot.graph.nodes.length}/${snapshot.graph.edges.length}`, { color, tone: "muted" }),
+      `Focus ${tuiModel?.focusRegion ?? "prompt"}`,
       `Dashboard ${snapshot.dashboard.url}`
     ].join("   ")
   ];
+  const selectedActionIndex = tuiModel?.selectedActionIndex ?? 0;
   const actionLines = [
-    [
-      colorize("Primary", DIM_YELLOW, color),
-      renderButton("Enter Send Prompt", { color, active: true }),
-      renderButton("D Dashboard", { color, active: wikiStatus === "online" }),
-      renderButton("L Logs", { color }),
-      renderButton("X Codex", { color })
-    ].join(" "),
-    [
-      colorize("Review ", DIM_YELLOW, color),
-      renderButton("W Wiki", { color }),
-      renderButton("N Note", { color }),
-      renderButton("V Verify", { color }),
-      renderButton("F Follow-up", { color })
-    ].join(" "),
-    [
-      colorize("System ", DIM_YELLOW, color),
-      renderButton("1-9 Select", { color }),
-      renderButton("A Agent", { color }),
-      renderButton("C Complete", { color }),
-      renderButton("Q Quit", { color })
-    ].join(" ")
+    TUI_ACTIONS.slice(0, 4).map((action, offset) => renderButton(action.label, {
+      color,
+      active: focused("actions") && selectedActionIndex === offset
+    })).join(" "),
+    TUI_ACTIONS.slice(4, 8).map((action, offset) => renderButton(action.label, {
+      color,
+      active: focused("actions") && selectedActionIndex === offset + 4
+    })).join(" "),
+    TUI_ACTIONS.slice(8).map((action, offset) => renderButton(action.label, {
+      color,
+      active: focused("actions") && selectedActionIndex === offset + 8
+    })).join(" ")
   ];
   const notice = snapshot.notice
     ? renderBox("Last Event", [snapshot.notice], { width: layout.frameWidth, color, dim: true })
@@ -493,18 +635,27 @@ export function renderTuiHome(snapshot, { color = false, width } = {}) {
     colorize("LOOP  Prompt Console", YELLOW, color),
     colorize("Loop Prompt Console · Goal-driven agent harness", DIM_YELLOW, color),
     "",
-    renderBox("Prompt", promptLines, { width: layout.frameWidth, color }),
+    renderBox("Prompt", promptLines, { width: layout.frameWidth, color, focused: focused("prompt") }),
     "",
-    renderBox("Harness Status", harnessLines, { width: layout.frameWidth, color, dim: true }),
+    renderBox("Harness Status", harnessLines, { width: layout.frameWidth, color, dim: true, focused: focused("status") }),
     "",
-    renderSplitPanels(runRows, selectedLines, { width: layout.frameWidth, color }),
+    renderSplitPanels(runRows, selectedLines, {
+      width: layout.frameWidth,
+      color,
+      leftFocused: focused("runs"),
+      rightFocused: focused("selectedRun")
+    }),
     "",
-    renderBox("Action Bar", actionLines, { width: layout.frameWidth, color, dim: true })
+    renderBox("Action Bar", actionLines, { width: layout.frameWidth, color, dim: true, focused: focused("actions") })
   ];
+  const overlay = tuiModel ? renderOverlay(snapshot, tuiModel, { color, width: layout.frameWidth }) : "";
+  if (overlay) {
+    sections.push("", overlay);
+  }
   if (notice) {
     sections.push("", notice);
   }
-  sections.push("", colorize("Enter submits prompt text. Lettered buttons trigger the visible actions.", MUTED, color), "");
+  sections.push("", colorize("Tab/Shift+Tab focus · ↑/↓ move · Enter open/send · Esc back · Ctrl+C quit", MUTED, color), "");
   return sections.join("\n");
 }
 
@@ -542,7 +693,6 @@ export function renderTuiProcessing(snapshot, {
     ? logTail.trim().split("\n").slice(-18).join("\n")
     : "Waiting for agent output...";
   const wikiStatus = wikiDashboardLabel(snapshot.dashboard);
-  const statusColor = wikiStatus === "online" ? GREEN : DIM_YELLOW;
   const logLines = log.split("\n").slice(-18);
   return [
     colorize("LOOP  Processing Console", YELLOW, color),
