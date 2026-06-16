@@ -1,4 +1,4 @@
-import { createInterface } from "node:readline/promises";
+import { emitKeypressEvents } from "node:readline";
 
 import {
   addWikiNoteAction,
@@ -19,15 +19,21 @@ import {
   launchTerminalCommand,
   loopRunCommand
 } from "./terminal-launcher.js";
+import { disableRawMode, enableRawMode, parseKeyIntent } from "./tui-input.js";
 import {
-  colorize,
-  normalizeTuiAction,
   renderTuiHome,
   renderTuiLogo,
   renderTuiProcessing,
-  shouldUseTuiColor,
-  TUI_PROMPT_COLOR
+  shouldUseTuiColor
 } from "./tui-render.js";
+import {
+  createTuiModel,
+  reduceTuiIntent,
+  setTuiNotice,
+  setTuiOverlay,
+  snapshotForTuiModel,
+  updateTuiSnapshot
+} from "./tui-state.js";
 
 export { renderTuiHome, renderTuiProcessing } from "./tui-render.js";
 
@@ -95,14 +101,6 @@ async function loadSnapshot({
 }
 
 /**
- * @param {NodeJS.WritableStream} output
- * @param {string} message
- */
-function writeStatus(output, message) {
-  output.write(`\n${message}\n`);
-}
-
-/**
  * @param {{ ok: boolean, error?: { message?: string, kind?: string } }} result
  * @param {string} successMessage
  */
@@ -148,7 +146,14 @@ function terminalWidth(output) {
  *   dashboardHost?: string,
  *   dashboardPort?: number,
  *   initialSelectedRunId?: string | null,
- *   initialAgent?: "codex" | "claudecode"
+ *   initialAgent?: "codex" | "claudecode",
+ *   addWikiNoteActionImpl?: typeof addWikiNoteAction,
+ *   markVerificationActionImpl?: typeof markVerificationAction,
+ *   markCompleteActionImpl?: typeof markCompleteAction,
+ *   prepareFollowUpRunActionImpl?: typeof prepareFollowUpRunAction,
+ *   prepareCodexOpenActionImpl?: typeof prepareCodexOpenAction,
+ *   readRunLogTailActionImpl?: typeof readRunLogTailAction,
+ *   listWikiNotesActionImpl?: typeof listWikiNotesAction
  * }} [options]
  */
 export async function runLoopTui({
@@ -165,228 +170,323 @@ export async function runLoopTui({
   dashboardHost,
   dashboardPort,
   initialSelectedRunId = null,
-  initialAgent = "codex"
+  initialAgent = "codex",
+  addWikiNoteActionImpl = addWikiNoteAction,
+  markVerificationActionImpl = markVerificationAction,
+  markCompleteActionImpl = markCompleteAction,
+  prepareFollowUpRunActionImpl = prepareFollowUpRunAction,
+  prepareCodexOpenActionImpl = prepareCodexOpenAction,
+  readRunLogTailActionImpl = readRunLogTailAction,
+  listWikiNotesActionImpl = listWikiNotesAction
 } = {}) {
   if (!input.isTTY || !output.isTTY) {
     throw new Error("Loop Prompt Console requires an interactive terminal.");
   }
-  let selectedRunId = /** @type {string | null} */ (initialSelectedRunId);
-  let agent = /** @type {"codex" | "claudecode"} */ (initialAgent);
   let showLogo = true;
-  let lastNotice = "";
   /** @type {import("node:http").Server | null} */
   let dashboardServer = null;
-  const rl = createInterface({ input, output });
-  try {
-    while (true) {
-      const snapshot = await loadSnapshot({
-        stateDir,
-        selectedRunId,
-        agent,
-        dashboardHost,
-        dashboardPort,
-        getDashboardStatusImpl
-      });
-      selectedRunId = snapshot.selectedRunId;
-      const useColor = shouldUseTuiColor({ isTTY: output.isTTY, env });
-      if (clearScreen) {
-        output.write("\x1Bc");
+  let snapshot = await loadSnapshot({
+    stateDir,
+    selectedRunId: initialSelectedRunId,
+    agent: initialAgent,
+    dashboardHost,
+    dashboardPort,
+    getDashboardStatusImpl
+  });
+  let model = createTuiModel(snapshot, {
+    selectedRunId: initialSelectedRunId,
+    agent: initialAgent
+  });
+
+  /**
+   * @param {{ logo?: boolean }} [options]
+   */
+  async function render({ logo = false } = {}) {
+    snapshot = await loadSnapshot({
+      stateDir,
+      selectedRunId: model.selectedRunId,
+      agent: model.agent,
+      dashboardHost,
+      dashboardPort,
+      getDashboardStatusImpl
+    });
+    model = updateTuiSnapshot(model, snapshot);
+    const useColor = shouldUseTuiColor({ isTTY: output.isTTY, env });
+    if (clearScreen) {
+      output.write("\x1Bc");
+    }
+    if (logo) {
+      output.write(`${renderTuiLogo({
+        color: useColor
+      })}\n\n`);
+    }
+    output.write(renderTuiHome(
+      /** @type {Parameters<typeof renderTuiHome>[0]} */ (snapshotForTuiModel(snapshot, model)),
+      {
+        color: useColor,
+        width: terminalWidth(output),
+        model
       }
-      if (showLogo) {
-        output.write(`${renderTuiLogo({
-          color: useColor
-        })}\n\n`);
+    ));
+  }
+
+  /**
+   * @param {string} action
+   */
+  function selectedRunIdFor(action) {
+    if (!model.selectedRunId) {
+      model = setTuiNotice(model, `Select a run before ${action}.`);
+      return null;
+    }
+    return model.selectedRunId;
+  }
+
+  /**
+   * @param {{ type: string, [key: string]: unknown }} effect
+   */
+  async function handleEffect(effect) {
+    if (effect.type === "selectRunIndex") {
+      const index = typeof effect.index === "number" ? effect.index : -1;
+      const selected = snapshot.runs[index] ?? null;
+      model = {
+        ...model,
+        selectedRunIndex: selected ? index : -1,
+        selectedRunId: selected?.id ?? null,
+        notice: selected ? `Selected run ${selected.id}.` : "No run selected."
+      };
+      return false;
+    }
+    if (effect.type === "refresh") {
+      return false;
+    }
+    if (effect.type === "quit") {
+      return true;
+    }
+    if (effect.type === "submitPrompt") {
+      const prompt = String(effect.prompt ?? "").trim();
+      if (!prompt) {
+        model = setTuiNotice(model, "Prompt is empty.");
+        return false;
       }
-      output.write(renderTuiHome({
-        ...snapshot,
-        notice: lastNotice
-      }, { color: useColor, width: terminalWidth(output) }));
-      showLogo = false;
-      if (once) {
-        return;
-      }
-      const answer = (await rl.question(colorize("Prompt › ", TUI_PROMPT_COLOR, useColor))).trim();
-      const action = normalizeTuiAction(answer);
-      if (!answer || action === "refresh") {
-        continue;
-      }
-      if (action === "quit") {
-        return;
-      }
-      if (/^[1-9]$/.test(answer)) {
-        const selected = snapshot.runs[Number(answer) - 1];
-        if (selected) {
-          selectedRunId = selected.id;
-          lastNotice = `Selected run ${selected.id}.`;
-        }
-        continue;
-      }
-      if (action === "agent") {
-        const choice = (await rl.question("Agent 1) codex 2) claudecode [1]: ")).trim();
-        agent = choice === "2" ? "claudecode" : "codex";
-        lastNotice = `Agent switched to ${agent}.`;
-        continue;
-      }
-      if (action === "dashboard") {
-        try {
-          const url = dashboardUrl({ host: dashboardHost, port: dashboardPort });
-          if (!dashboardServer) {
-            const served = await serveWikiDashboardImpl({ stateDir, host: dashboardHost, port: dashboardPort });
-            if (served.server) {
-              dashboardServer = served.server;
-            }
-            openTargetImpl(served.url);
-            lastNotice = `Wiki dashboard opened: ${served.url}`;
-          } else {
-            openTargetImpl(url);
-            lastNotice = `Wiki dashboard opened: ${url}`;
-          }
-        } catch (error) {
-          const fallbackUrl = dashboardUrl();
-          lastNotice = `Dashboard failed: ${error instanceof Error ? error.message : String(error)} (${fallbackUrl})`;
-        }
-        continue;
-      }
-      if (!selectedRunId && action) {
-        lastNotice = `Select a run first for ${action}. Type a full objective to prepare a new Loop prompt.`;
-        continue;
-      }
-      if (!selectedRunId) {
-        lastNotice = `Prepared new Loop prompt. Run: ${loopRunCommand({
-          agent,
-          prompt: answer,
+      if (!model.selectedRunId) {
+        model = setTuiNotice(model, `Prepared new Loop prompt. Run: ${loopRunCommand({
+          agent: model.agent,
+          prompt,
           stateDir
-        })}`;
-        await rl.question("Press Enter to return.");
-        continue;
+        })}`);
+        return false;
       }
-      if (action === "logs") {
-        const tail = await readRunLogTailAction({ stateDir, id: selectedRunId, maxLines: 60 });
-        writeStatus(output, tail.log || "No log output recorded yet.");
-        await rl.question("Press Enter to return.");
-        continue;
-      }
-      if (action === "wiki") {
-        const notes = await listWikiNotesAction({ stateDir });
-        writeStatus(output, notes.notes.map((note) => `${note.kind} ${note.id} - ${note.title}`).join("\n") || "No wiki notes.");
-        await rl.question("Press Enter to return.");
-        continue;
-      }
-      if (action === "note") {
-        const title = (await rl.question("Title: ")).trim();
-        const body = (await rl.question("Body: ")).trim();
-        if (title && body) {
-          const result = await addWikiNoteAction({
-            stateDir,
-            runId: selectedRunId,
-            targetId: selectedRunId,
-            kind: "note",
-            title,
-            body,
-            confirmation: createActionConfirmation({ action: "add-note", targetId: selectedRunId, stateDir })
-          });
-          lastNotice = actionStatus(result, "Note added.");
-        } else {
-          lastNotice = "Title and body are required.";
-        }
-        continue;
-      }
-      if (action === "verify") {
-        const summary = (await rl.question("Evidence summary: ")).trim();
-        if (summary) {
-          const result = await markVerificationAction({
-            stateDir,
-            id: selectedRunId,
-            summary,
-            confirmation: createActionConfirmation({ action: "verify-run", targetId: selectedRunId, stateDir })
-          });
-          lastNotice = actionStatus(result, "Verification evidence recorded.");
-        } else {
-          lastNotice = "Evidence summary is required.";
-        }
-        continue;
-      }
-      if (action === "complete") {
-        const confirm = (await rl.question(`Mark ${selectedRunId} complete? y/N `)).trim().toLowerCase();
-        if (confirm === "y" || confirm === "yes") {
-          const result = await markCompleteAction({
-            stateDir,
-            id: selectedRunId,
-            confirmation: createActionConfirmation({ action: "mark-complete", targetId: selectedRunId, stateDir })
-          });
-          lastNotice = actionStatus(result, "Run marked complete.");
-        }
-        continue;
-      }
-      if (action === "follow") {
-        const prompt = (await rl.question("Follow-up objective: ")).trim();
-        if (prompt) {
-          const follow = await prepareFollowUpRunAction({
-            stateDir,
-            parentRunId: selectedRunId,
-            prompt,
-            createdFrom: "tui",
-            confirmation: createActionConfirmation({ action: "follow-up-run", targetId: selectedRunId, stateDir })
-          });
-          if (follow.ok) {
-            lastNotice = `Prepared follow-up. Run: ${loopRunCommand({
-              agent,
-              prompt,
-              stateDir,
-              parentRunId: selectedRunId,
-              lineageSource: "tui"
-            })}`;
-            await rl.question("Press Enter to return.");
-          }
-        }
-        continue;
-      }
-      if (action === "codex") {
-        const confirm = (await rl.question(`Open Codex for ${selectedRunId}? y/N `)).trim().toLowerCase();
-        if (confirm === "y" || confirm === "yes") {
-          const opened = await prepareCodexOpenAction({
-            stateDir,
-            id: selectedRunId,
-            confirmation: createActionConfirmation({ action: "open-codex", targetId: selectedRunId, stateDir })
-          });
-          if (opened.ok) {
-            const spec = codexCommandSpecFromOpenEffect(opened.effect);
-            if (spec) {
-              launchTerminalCommandImpl(spec);
-              lastNotice = `Opened Codex: ${codexCommandFromOpenEffect(opened.effect)}`;
-            }
-          } else {
-            const message = "error" in opened && opened.error?.message
-              ? opened.error.message
-              : "No Codex resume command is available for this run.";
-            lastNotice = message;
-          }
-          await rl.question("Press Enter to return.");
-        }
-        continue;
-      }
-      const follow = await prepareFollowUpRunAction({
+      const follow = await prepareFollowUpRunActionImpl({
         stateDir,
-        parentRunId: selectedRunId,
-        prompt: answer,
+        parentRunId: model.selectedRunId,
+        prompt,
         createdFrom: "tui",
-        confirmation: createActionConfirmation({ action: "follow-up-run", targetId: selectedRunId, stateDir })
+        confirmation: createActionConfirmation({ action: "follow-up-run", targetId: model.selectedRunId, stateDir })
       });
       if (follow.ok) {
-        lastNotice = `Prepared connected Loop prompt. Run: ${loopRunCommand({
-          agent,
-          prompt: answer,
+        model = setTuiNotice(model, `Prepared connected Loop prompt. Run: ${loopRunCommand({
+          agent: model.agent,
+          prompt,
           stateDir,
-          parentRunId: selectedRunId,
+          parentRunId: model.selectedRunId,
           lineageSource: "tui"
-        })}`;
+        })}`);
       } else {
-        lastNotice = `Prompt failed: ${follow.error?.message ?? follow.error?.kind ?? "unknown error"}`;
+        model = setTuiNotice(model, `Prompt failed: ${follow.error?.message ?? follow.error?.kind ?? "unknown error"}`);
       }
-      await rl.question("Press Enter to return.");
+      return false;
     }
+    if (effect.type !== "action") {
+      return false;
+    }
+    const action = String(effect.action);
+    if (action === "dashboard") {
+      try {
+        const url = dashboardUrl({ host: dashboardHost, port: dashboardPort });
+        if (!dashboardServer) {
+          const served = await serveWikiDashboardImpl({ stateDir, host: dashboardHost, port: dashboardPort });
+          if (served.server) {
+            dashboardServer = served.server;
+          }
+          openTargetImpl(served.url);
+          model = setTuiNotice(model, `Wiki dashboard opened: ${served.url}`);
+        } else {
+          openTargetImpl(url);
+          model = setTuiNotice(model, `Wiki dashboard opened: ${url}`);
+        }
+      } catch (error) {
+        const fallbackUrl = dashboardUrl();
+        model = setTuiNotice(model, `Dashboard failed: ${error instanceof Error ? error.message : String(error)} (${fallbackUrl})`);
+      }
+      return false;
+    }
+    if (action === "logs") {
+      const runId = selectedRunIdFor("logs");
+      if (!runId) {
+        return false;
+      }
+      const tail = await readRunLogTailActionImpl({ stateDir, id: runId, maxLines: 60 });
+      const lines = tail.log ? tail.log.split(/\r?\n/) : ["No log output recorded yet."];
+      model = setTuiOverlay(model, "logPreview", { lines });
+      return false;
+    }
+    if (action === "wiki") {
+      const notes = await listWikiNotesActionImpl({ stateDir });
+      const lines = notes.notes.length
+        ? notes.notes.map((note) => `${note.kind} ${note.id} - ${note.title}`)
+        : ["No wiki notes."];
+      model = setTuiOverlay(model, "wikiList", { lines });
+      return false;
+    }
+    if (action === "note") {
+      const runId = selectedRunIdFor("note");
+      if (!runId) {
+        return false;
+      }
+      const result = await addWikiNoteActionImpl({
+        stateDir,
+        runId,
+        targetId: runId,
+        kind: "note",
+        title: String(effect.title ?? ""),
+        body: String(effect.body ?? ""),
+        confirmation: createActionConfirmation({ action: "add-note", targetId: runId, stateDir })
+      });
+      model = setTuiNotice(model, actionStatus(result, "Note added."));
+      return false;
+    }
+    if (action === "verify") {
+      const runId = selectedRunIdFor("verify");
+      if (!runId) {
+        return false;
+      }
+      const result = await markVerificationActionImpl({
+        stateDir,
+        id: runId,
+        summary: String(effect.summary ?? ""),
+        confirmation: createActionConfirmation({ action: "verify-run", targetId: runId, stateDir })
+      });
+      model = setTuiNotice(model, actionStatus(result, "Verification evidence recorded."));
+      return false;
+    }
+    if (action === "complete") {
+      const runId = selectedRunIdFor("complete");
+      if (!runId) {
+        return false;
+      }
+      const result = await markCompleteActionImpl({
+        stateDir,
+        id: runId,
+        confirmation: createActionConfirmation({ action: "mark-complete", targetId: runId, stateDir })
+      });
+      model = setTuiNotice(model, actionStatus(result, "Run marked complete."));
+      return false;
+    }
+    if (action === "follow") {
+      const runId = selectedRunIdFor("follow-up");
+      if (!runId) {
+        return false;
+      }
+      const prompt = String(effect.prompt ?? "");
+      const follow = await prepareFollowUpRunActionImpl({
+        stateDir,
+        parentRunId: runId,
+        prompt,
+        createdFrom: "tui",
+        confirmation: createActionConfirmation({ action: "follow-up-run", targetId: runId, stateDir })
+      });
+      if (follow.ok) {
+        model = setTuiNotice(model, `Prepared follow-up. Run: ${loopRunCommand({
+          agent: model.agent,
+          prompt,
+          stateDir,
+          parentRunId: runId,
+          lineageSource: "tui"
+        })}`);
+      } else {
+        model = setTuiNotice(model, `Follow-up failed: ${follow.error?.message ?? follow.error?.kind ?? "unknown error"}`);
+      }
+      return false;
+    }
+    if (action === "codex") {
+      const runId = selectedRunIdFor("codex");
+      if (!runId) {
+        return false;
+      }
+      const opened = await prepareCodexOpenActionImpl({
+        stateDir,
+        id: runId,
+        confirmation: createActionConfirmation({ action: "open-codex", targetId: runId, stateDir })
+      });
+      if (opened.ok) {
+        const spec = codexCommandSpecFromOpenEffect(opened.effect);
+        if (spec) {
+          launchTerminalCommandImpl(spec);
+          model = setTuiNotice(model, `Opened Codex: ${codexCommandFromOpenEffect(opened.effect)}`);
+        } else {
+          model = setTuiNotice(model, "No Codex resume command is available for this run.");
+        }
+      } else {
+        const message = "error" in opened && opened.error?.message
+          ? opened.error.message
+          : "No Codex resume command is available for this run.";
+        model = setTuiNotice(model, message);
+      }
+      return false;
+    }
+    return false;
+  }
+
+  await render({ logo: showLogo });
+  showLogo = false;
+  if (once) {
+    return;
+  }
+
+  emitKeypressEvents(input);
+  enableRawMode(input);
+  if (typeof input.resume === "function") {
+    input.resume();
+  }
+
+  /** @type {((str: string, key: Record<string, unknown>) => void) | null} */
+  let onKeypress = null;
+  let queue = Promise.resolve();
+  try {
+    await new Promise((resolve, reject) => {
+      let done = false;
+      onKeypress = (str, key) => {
+        queue = queue.then(async () => {
+          if (done) {
+            return;
+          }
+          const intent = parseKeyIntent({ str, key, model, runCount: snapshot.runs.length });
+          if (!intent) {
+            return;
+          }
+          const reduced = reduceTuiIntent(model, { ...intent, runCount: snapshot.runs.length });
+          model = reduced.model;
+          for (const effect of reduced.effects) {
+            const shouldQuit = await handleEffect(effect);
+            if (shouldQuit) {
+              done = true;
+              resolve(undefined);
+              return;
+            }
+          }
+          await render();
+        }).catch((error) => {
+          done = true;
+          reject(error);
+        });
+      };
+      input.on("keypress", /** @type {(...args: unknown[]) => void} */ (onKeypress));
+    });
   } finally {
-    rl.close();
+    if (onKeypress) {
+      input.off("keypress", /** @type {(...args: unknown[]) => void} */ (onKeypress));
+    }
+    disableRawMode(input);
     if (dashboardServer) {
       await new Promise((resolve) => dashboardServer?.close(resolve));
     }
