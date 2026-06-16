@@ -5,6 +5,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { readRunLog, readRunState } from "./state-store.js";
+import { listLoopProjects, readLoopProject, registerLoopProject } from "./project-registry.js";
 import {
   addWikiNoteAction,
   createActionConfirmation,
@@ -26,6 +27,7 @@ import {
   listWikiNotes,
   readWikiNote,
   renderRunLogHtml,
+  renderGlobalWikiDashboardHtml,
   renderWikiGraphHtml,
   renderMarkdownHtml,
   renderWikiDashboardHtml
@@ -255,10 +257,19 @@ function redirect(response, location = "/") {
 }
 
 /**
- * @param {import("node:http").ServerResponse} response
- * @param {{ title: string, message: string, command?: string }} input
+ * @param {string} basePath
+ * @param {string} path
  */
-function sendActionResult(response, { title, message, command }) {
+function routePath(basePath, path) {
+  const normalizedBase = basePath.replace(/\/+$/, "");
+  return `${normalizedBase}${path}`;
+}
+
+/**
+ * @param {import("node:http").ServerResponse} response
+ * @param {{ title: string, message: string, command?: string, backHref?: string }} input
+ */
+function sendActionResult(response, { title, message, command, backHref = "/" }) {
   const commandHtml = command
     ? `<section class="result-card"><h2>Command</h2><code>${escapeHtml(command)}</code></section>`
     : "";
@@ -289,10 +300,44 @@ function sendActionResult(response, { title, message, command }) {
       <p>${escapeHtml(message)}</p>
     </section>
     ${commandHtml}
-    <a href="/">Back to Loop Wiki</a>
+    <a href="${escapeHtml(backHref)}">Back to Loop Wiki</a>
   </main>
 </body>
 </html>`);
+}
+
+/** @param {{ registryPath?: string }} [options] */
+async function readGlobalDashboardProjects({ registryPath } = {}) {
+  const projects = await listLoopProjects({ registryPath });
+  return Promise.all(projects.map(async (project) => {
+    try {
+      return {
+        ...project,
+        notes: await listWikiNotes({ stateDir: project.stateDir })
+      };
+    } catch {
+      return {
+        ...project,
+        notes: []
+      };
+    }
+  }));
+}
+
+/**
+ * @param {string} projectId
+ * @param {{ registryPath?: string }} [options]
+ */
+async function projectRouteContext(projectId, { registryPath } = {}) {
+  const project = await readLoopProject(projectId, { registryPath });
+  if (!project) {
+    return null;
+  }
+  return {
+    project,
+    stateDir: project.stateDir,
+    basePath: `/projects/${encodeURIComponent(project.id)}`
+  };
 }
 
 /** @param {string} value */
@@ -342,9 +387,10 @@ export async function getDashboardStatus({
       return { running: false, occupied: true };
     }
     const body = await response.json().catch(() => ({}));
+    const isCurrentLoopWiki = body && body.name === "loop-wiki" && body.mode === "global";
     return {
-      running: body && body.name === "loop-wiki",
-      occupied: !(body && body.name === "loop-wiki")
+      running: isCurrentLoopWiki,
+      occupied: !isCurrentLoopWiki
     };
   } catch (error) {
     if (getNestedErrorCode(error) === "ECONNREFUSED") {
@@ -382,6 +428,8 @@ export async function waitForDashboardReady({
  *   port?: number,
  *   confirmationSecret?: string | Buffer,
  *   confirmationTtlMs?: number,
+ *   cwd?: string,
+ *   registryPath?: string,
  *   launchTerminalCommandImpl?: typeof launchTerminalCommand,
  *   openTargetImpl?: typeof openTarget
  * }} [options]
@@ -392,31 +440,36 @@ export function createWikiServer({
   port = DEFAULT_WIKI_PORT,
   confirmationSecret = randomBytes(32),
   confirmationTtlMs = DEFAULT_CONFIRMATION_TTL_MS,
+  registryPath,
   launchTerminalCommandImpl = launchTerminalCommand,
   openTargetImpl = openTarget
 } = {}) {
   assertWikiDashboardHost(host);
-  /** @type {(input: { action: string, targetId: string }) => string} */
-  const tokenFor = ({ action, targetId }) => createDashboardConfirmationToken({
-    action,
-    targetId,
-    stateDir,
-    secret: confirmationSecret,
-    ttlMs: confirmationTtlMs
-  });
+  /** @param {string} localStateDir */
+  const tokenForState = (localStateDir) => (
+    /** @type {(input: { action: string, targetId: string }) => string} */
+    ({ action, targetId }) => createDashboardConfirmationToken({
+      action,
+      targetId,
+      stateDir: localStateDir,
+      secret: confirmationSecret,
+      ttlMs: confirmationTtlMs
+    })
+  );
   /**
    * @param {import("node:http").ServerResponse} response
    * @param {URLSearchParams} form
    * @param {string} action
    * @param {string} targetId
+   * @param {string} localStateDir
    */
-  const dashboardConfirmation = (response, form, action, targetId) => {
+  const dashboardConfirmation = (response, form, action, targetId, localStateDir) => {
     const token = formString(form, "confirmationToken");
     const verified = verifyDashboardConfirmationToken({
       token,
       action,
       targetId,
-      stateDir,
+      stateDir: localStateDir,
       secret: confirmationSecret
     });
     if (!verified.ok) {
@@ -424,7 +477,7 @@ export function createWikiServer({
       return null;
     }
     return {
-      ...createActionConfirmation({ action, targetId, stateDir }),
+      ...createActionConfirmation({ action, targetId, stateDir: localStateDir }),
       token
     };
   };
@@ -442,25 +495,40 @@ export function createWikiServer({
   const server = createServer(async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", dashboardUrl({ host, port }));
-      if (request.method === "POST" && url.pathname.startsWith("/actions/")) {
-        const actionName = url.pathname.slice("/actions/".length);
+      let pathname = url.pathname;
+      let routeStateDir = stateDir;
+      let basePath = "";
+      const projectMatch = /^\/projects\/([^/]+)(\/.*)?$/.exec(pathname);
+      if (projectMatch) {
+        const context = await projectRouteContext(decodeURIComponent(projectMatch[1]), { registryPath });
+        if (!context) {
+          sendPlain(response, 404, "Loop project was not found.");
+          return;
+        }
+        routeStateDir = context.stateDir;
+        basePath = context.basePath;
+        pathname = projectMatch[2] || "/";
+      }
+      const tokenFor = tokenForState(routeStateDir);
+      if (request.method === "POST" && pathname.startsWith("/actions/")) {
+        const actionName = pathname.slice("/actions/".length);
         const form = await readFormBody(request);
         if (actionName === "delete-note") {
           const id = formString(form, "id");
-          const confirmation = dashboardConfirmation(response, form, "delete-note", id);
+          const confirmation = dashboardConfirmation(response, form, "delete-note", id, routeStateDir);
           if (!confirmation) {
             return;
           }
-          const result = await deleteWikiNoteAction({ id, stateDir, confirmation });
+          const result = await deleteWikiNoteAction({ id, stateDir: routeStateDir, confirmation });
           if (!ensureActionOk(response, result)) {
             return;
           }
-          redirect(response);
+          redirect(response, basePath || "/");
           return;
         }
         if (actionName === "add-note") {
           const targetId = formString(form, "targetId") || "wiki";
-          const confirmation = dashboardConfirmation(response, form, "add-note", targetId);
+          const confirmation = dashboardConfirmation(response, form, "add-note", targetId, routeStateDir);
           if (!confirmation) {
             return;
           }
@@ -471,7 +539,7 @@ export function createWikiServer({
             return;
           }
           const result = await addWikiNoteAction({
-            stateDir,
+            stateDir: routeStateDir,
             runId: formString(form, "runId") || undefined,
             parentId: formString(form, "parentId") || undefined,
             targetId,
@@ -483,63 +551,63 @@ export function createWikiServer({
           if (!ensureActionOk(response, result)) {
             return;
           }
-          redirect(response);
+          redirect(response, basePath || "/");
           return;
         }
         if (actionName === "delete-run") {
           const id = formString(form, "id");
-          const confirmation = dashboardConfirmation(response, form, "delete-run", id);
+          const confirmation = dashboardConfirmation(response, form, "delete-run", id, routeStateDir);
           if (!confirmation) {
             return;
           }
-          const result = await deleteRunAction({ id, stateDir, confirmation });
+          const result = await deleteRunAction({ id, stateDir: routeStateDir, confirmation });
           if (!ensureActionOk(response, result)) {
             return;
           }
-          redirect(response);
+          redirect(response, basePath || "/");
           return;
         }
         if (actionName === "verify-run") {
           const id = formString(form, "id");
-          const confirmation = dashboardConfirmation(response, form, "verify-run", id);
+          const confirmation = dashboardConfirmation(response, form, "verify-run", id, routeStateDir);
           if (!confirmation) {
             return;
           }
           const result = await markVerificationAction({
             id,
-            stateDir,
+            stateDir: routeStateDir,
             summary: formString(form, "summary") || "Verified from the Loop Wiki dashboard.",
             confirmation
           });
           if (!ensureActionOk(response, result)) {
             return;
           }
-          redirect(response, `/runs/${encodeURIComponent(id)}/log`);
+          redirect(response, routePath(basePath, `/runs/${encodeURIComponent(id)}/log`));
           return;
         }
         if (actionName === "mark-complete") {
           const id = formString(form, "id");
-          const confirmation = dashboardConfirmation(response, form, "mark-complete", id);
+          const confirmation = dashboardConfirmation(response, form, "mark-complete", id, routeStateDir);
           if (!confirmation) {
             return;
           }
           const result = await markCompleteAction({
             id,
-            stateDir,
+            stateDir: routeStateDir,
             confirmation,
             summary: formString(form, "summary") || "Marked complete from the Loop Wiki dashboard."
           });
           if (!ensureActionOk(response, result)) {
             return;
           }
-          redirect(response, `/runs/${encodeURIComponent(id)}/log`);
+          redirect(response, routePath(basePath, `/runs/${encodeURIComponent(id)}/log`));
           return;
         }
         if (actionName === "follow-up") {
           const parentRunId = formString(form, "parentRunId");
           const prompt = formString(form, "prompt");
           const agent = formString(form, "agent") === "claudecode" ? "claudecode" : "codex";
-          const confirmation = dashboardConfirmation(response, form, "follow-up-run", parentRunId);
+          const confirmation = dashboardConfirmation(response, form, "follow-up-run", parentRunId, routeStateDir);
           if (!confirmation) {
             return;
           }
@@ -550,7 +618,7 @@ export function createWikiServer({
           const result = await prepareFollowUpRunAction({
             parentRunId,
             prompt,
-            stateDir,
+            stateDir: routeStateDir,
             createdFrom: "dashboard",
             confirmation
           });
@@ -560,10 +628,11 @@ export function createWikiServer({
           sendActionResult(response, {
             title: "Follow-up prepared",
             message: `Prepared a follow-up loop from ${parentRunId}. Run the command below to start it with ${agent}.`,
+            backHref: basePath || "/",
             command: loopRunCommand({
               agent,
               prompt,
-              stateDir,
+              stateDir: routeStateDir,
               parentRunId,
               lineageSource: "dashboard"
             })
@@ -572,11 +641,11 @@ export function createWikiServer({
         }
         if (actionName === "open-codex") {
           const id = formString(form, "id");
-          const confirmation = dashboardConfirmation(response, form, "open-codex", id);
+          const confirmation = dashboardConfirmation(response, form, "open-codex", id, routeStateDir);
           if (!confirmation) {
             return;
           }
-          const result = await prepareCodexOpenAction({ id, stateDir, confirmation });
+          const result = await prepareCodexOpenAction({ id, stateDir: routeStateDir, confirmation });
           if (!ensureActionOk(response, result)) {
             return;
           }
@@ -594,21 +663,22 @@ export function createWikiServer({
           sendActionResult(response, {
             title: "Codex terminal opened",
             message: `Launched terminal command${launched.pid ? ` with pid ${launched.pid}` : ""}.`,
+            backHref: basePath || "/",
             command
           });
           return;
         }
         if (actionName === "open-dashboard") {
           const targetId = "dashboard";
-          if (!dashboardConfirmation(response, form, "open-dashboard", targetId)) {
+          if (!dashboardConfirmation(response, form, "open-dashboard", targetId, routeStateDir)) {
             return;
           }
           openTargetImpl(dashboardUrl({ host, port }));
-          redirect(response);
+          redirect(response, basePath || "/");
           return;
         }
         if (actionName === "graph-view") {
-          redirect(response, "/graph");
+          redirect(response, routePath(basePath, "/graph"));
           return;
         }
         sendPlain(response, 404, `Unknown dashboard action: ${actionName}`);
@@ -618,22 +688,22 @@ export function createWikiServer({
         sendPlain(response, 404, "Unknown dashboard action.");
         return;
       }
-      if (url.pathname === "/health") {
+      if (pathname === "/health") {
         response.writeHead(200, { "content-type": "application/json" });
-        response.end(`${JSON.stringify({ ok: true, name: "loop-wiki" })}\n`);
+        response.end(`${JSON.stringify({ ok: true, name: "loop-wiki", mode: "global", stateDir: resolve(stateDir) })}\n`);
         return;
       }
-      if (url.pathname === "/api/index") {
-        const notes = await listWikiNotes({ stateDir });
+      if (pathname === "/api/index") {
+        const notes = await listWikiNotes({ stateDir: routeStateDir });
         response.writeHead(200, { "content-type": "application/json" });
         response.end(`${JSON.stringify({ notes }, null, 2)}\n`);
         return;
       }
-      if (url.pathname.startsWith("/api/runs/") && url.pathname.endsWith("/log")) {
-        const id = decodeURIComponent(url.pathname.slice("/api/runs/".length, -"/log".length));
+      if (pathname.startsWith("/api/runs/") && pathname.endsWith("/log")) {
+        const id = decodeURIComponent(pathname.slice("/api/runs/".length, -"/log".length));
         const [log, readState] = await Promise.all([
-          readRunLog(id, { stateDir }),
-          readRunState(id, { stateDir })
+          readRunLog(id, { stateDir: routeStateDir }),
+          readRunState(id, { stateDir: routeStateDir })
         ]);
         response.writeHead(200, {
           "cache-control": "no-store",
@@ -647,37 +717,44 @@ export function createWikiServer({
         })}\n`);
         return;
       }
-      if (url.pathname.startsWith("/notes/")) {
-        const id = decodeURIComponent(url.pathname.slice("/notes/".length));
-        const note = await readWikiNote(id, { stateDir });
+      if (pathname.startsWith("/notes/")) {
+        const id = decodeURIComponent(pathname.slice("/notes/".length));
+        const note = await readWikiNote(id, { stateDir: routeStateDir });
         response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        response.end(renderMarkdownHtml(note.markdown, { noteId: note.id, confirmationTokenFor: tokenFor }));
+        response.end(renderMarkdownHtml(note.markdown, { noteId: note.id, confirmationTokenFor: tokenFor, basePath }));
         return;
       }
-      if (url.pathname.startsWith("/runs/") && url.pathname.endsWith("/log")) {
-        const id = decodeURIComponent(url.pathname.slice("/runs/".length, -"/log".length));
+      if (pathname.startsWith("/runs/") && pathname.endsWith("/log")) {
+        const id = decodeURIComponent(pathname.slice("/runs/".length, -"/log".length));
         const [log, readState] = await Promise.all([
-          readRunLog(id, { stateDir }),
-          readRunState(id, { stateDir })
+          readRunLog(id, { stateDir: routeStateDir }),
+          readRunState(id, { stateDir: routeStateDir })
         ]);
         response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         response.end(renderRunLogHtml({
           id,
           log,
           state: readState.ok ? readState.state : null,
-          stateDir
+          stateDir: routeStateDir,
+          basePath
         }));
         return;
       }
-      if (url.pathname === "/graph") {
-        const notes = await listWikiNotes({ stateDir });
+      if (pathname === "/graph") {
+        const notes = await listWikiNotes({ stateDir: routeStateDir });
         response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        response.end(renderWikiGraphHtml(notes));
+        response.end(renderWikiGraphHtml(notes, { basePath }));
         return;
       }
-      const notes = await listWikiNotes({ stateDir });
+      if (pathname === "/" && !basePath) {
+        const projects = await readGlobalDashboardProjects({ registryPath });
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        response.end(renderGlobalWikiDashboardHtml(projects));
+        return;
+      }
+      const notes = await listWikiNotes({ stateDir: routeStateDir });
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      response.end(renderWikiDashboardHtml(notes, { confirmationTokenFor: tokenFor }));
+      response.end(renderWikiDashboardHtml(notes, { confirmationTokenFor: tokenFor, basePath }));
     } catch (error) {
       response.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
       response.end(error instanceof Error ? error.message : String(error));
@@ -693,6 +770,8 @@ export function createWikiServer({
  *   port?: number,
  *   confirmationSecret?: string | Buffer,
  *   confirmationTtlMs?: number,
+ *   cwd?: string,
+ *   registryPath?: string,
  *   launchTerminalCommandImpl?: typeof launchTerminalCommand,
  *   openTargetImpl?: typeof openTarget
  * }} [options]
@@ -703,16 +782,19 @@ export async function serveWikiDashboard({
   port = DEFAULT_WIKI_PORT,
   confirmationSecret,
   confirmationTtlMs,
+  cwd,
+  registryPath,
   launchTerminalCommandImpl,
   openTargetImpl
 } = {}) {
   assertWikiDashboardHost(host);
+  await registerLoopProject({ cwd, stateDir, registryPath });
   const status = await getDashboardStatus({ host, port });
   if (status.running) {
     return { status: "already-running", url: dashboardUrl({ host, port }), server: null };
   }
   if (status.occupied) {
-    throw new Error(`Port ${port} is already in use by another service.`);
+    throw new Error(`Port ${port} is already in use by another or legacy service.`);
   }
   const resolvedConfirmationSecret = confirmationSecret ?? await loadOrCreateDashboardSecret(stateDir);
 
@@ -722,6 +804,7 @@ export async function serveWikiDashboard({
     port,
     confirmationSecret: resolvedConfirmationSecret,
     confirmationTtlMs,
+    registryPath,
     launchTerminalCommandImpl,
     openTargetImpl
   });

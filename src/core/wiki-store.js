@@ -46,6 +46,15 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;");
 }
 
+/**
+ * @param {string} basePath
+ * @param {string} path
+ */
+function routePath(basePath, path) {
+  const normalizedBase = basePath.replace(/\/+$/, "");
+  return `${normalizedBase}${path}`;
+}
+
 /** @param {string} value */
 function stripMarkdown(value) {
   return value
@@ -1636,8 +1645,9 @@ function graphEdges(notes) {
 
 /**
  * @param {WikiIndexEntry[]} notes
+ * @param {{ basePath?: string }} [options]
  */
-function renderGraphSvg(notes) {
+function renderGraphSvg(notes, { basePath = "" } = {}) {
   if (notes.length === 0) {
     return "<p class=\"empty\">No graph nodes yet.</p>";
   }
@@ -1701,7 +1711,7 @@ function renderGraphSvg(notes) {
     }
     const label = truncateText(note.title, 24);
     const radius = isRunNote(note) ? 16 : 10;
-    return `<a href="/notes/${encodeURIComponent(note.id)}" class="graph-node-link"><g class="graph-node graph-kind-${escapeHtml(note.kind)} ${statusClass(note.status)}">
+    return `<a href="${routePath(basePath, `/notes/${encodeURIComponent(note.id)}`)}" class="graph-node-link"><g class="graph-node graph-kind-${escapeHtml(note.kind)} ${statusClass(note.status)}">
       <circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="${radius}"><title>${escapeHtml(note.title)}</title></circle>
       <text x="${point.x.toFixed(1)}" y="${(point.y + radius + 18).toFixed(1)}" text-anchor="middle">${escapeHtml(label)}</text>
     </g></a>`;
@@ -1725,10 +1735,121 @@ function renderGraphSvg(notes) {
 }
 
 /**
- * @param {WikiIndexEntry[]} notes
- * @param {{ confirmationTokenFor?: (input: { action: string, targetId: string }) => string }} [options]
+ * @param {Array<import("./project-registry.js").LoopProjectEntry & { notes: WikiIndexEntry[] }>} projects
  */
-export function renderWikiDashboardHtml(notes, { confirmationTokenFor = () => "" } = {}) {
+export function renderGlobalWikiDashboardHtml(projects) {
+  const allNotes = projects.flatMap((project) => project.notes);
+  const locale = localeForNotes(allNotes);
+  const text = wikiText(locale);
+  const runCount = allNotes.filter(isRunNote).length;
+  const attachedCount = allNotes.filter((note) => note.parentId).length;
+  const projectCards = projects.length === 0
+    ? `<p class="muted">${escapeHtml(locale === "ko" ? "아직 등록된 Loop 프로젝트가 없습니다. 프로젝트 폴더에서 loop \"목표\"를 실행하면 여기에 추가됩니다." : "No Loop projects have been registered yet. Run loop \"objective\" from a project folder to add one here.")}</p>`
+    : projects.map((project) => {
+        const latest = project.notes[0];
+        const projectRunCount = project.notes.filter(isRunNote).length;
+        const projectAttachedCount = project.notes.filter((note) => note.parentId).length;
+        const status = latest ? displayStatus(latest.status, locale) : text.noNotesYet;
+        const phase = latest ? displayPhase(latest.phase, locale) : text.notRecorded;
+        return `
+          <article class="project-card">
+            <div class="project-main">
+              <div class="note-row-meta">
+                <span class="kind">${escapeHtml(project.name)}</span>
+                <span>${escapeHtml(project.updatedAt)}</span>
+              </div>
+              <h3>${escapeHtml(latest?.title ?? project.name)}</h3>
+              <p>${escapeHtml(latest?.summary ?? project.cwd)}</p>
+              <p class="path">${escapeHtml(project.cwd)}</p>
+            </div>
+            <div class="project-side">
+              <div class="status ${statusClass(latest?.status ?? "active")}">${escapeHtml(status)}</div>
+              <small>${escapeHtml(phase)}</small>
+              <div class="project-metrics">
+                <span>${projectRunCount} ${escapeHtml(text.runs)}</span>
+                <span>${projectAttachedCount} ${escapeHtml(text.attached)}</span>
+                <span>${project.notes.length} ${escapeHtml(text.notes)}</span>
+              </div>
+              <a class="button secondary" href="/projects/${encodeURIComponent(project.id)}">${escapeHtml(locale === "ko" ? "프로젝트 열기" : "Open project")}</a>
+            </div>
+          </article>`;
+      }).join("");
+  return `<!doctype html>
+<html lang="${text.lang}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Loop Wiki</title>
+  <style>
+    :root { color-scheme: dark; --ink: #f4f0e8; --muted: #9da0a6; --line: #2a2b31; --panel: #15161a; --panel-strong: #1d1f25; --page: #090a0d; --blue: #8bd3ff; --green: #77d99a; --red: #ff7b72; --amber: #f4c95d; --violet: #c9a7ff; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); background: var(--page); }
+    body::before { content: ""; position: fixed; inset: 0; pointer-events: none; background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px); background-size: 32px 32px; mask-image: linear-gradient(to bottom, rgba(0,0,0,.8), rgba(0,0,0,.18)); }
+    header { position: sticky; top: 0; z-index: 5; padding: 18px 32px; border-bottom: 1px solid var(--line); background: rgba(9, 10, 13, .92); backdrop-filter: blur(14px); }
+    main { position: relative; max-width: 1240px; margin: 0 auto; padding: 22px 32px 40px; display: grid; gap: 16px; }
+    h1 { margin: 0; font-size: 25px; line-height: 1.1; letter-spacing: 0; }
+    h2 { margin: 0; font-size: 20px; line-height: 1.2; letter-spacing: 0; }
+    h3 { margin: 10px 0 8px; font-size: 18px; line-height: 1.25; letter-spacing: 0; }
+    p { margin: 0; color: var(--muted); }
+    a { color: var(--blue); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+    .header-row { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+    .eyebrow { color: var(--violet); font-size: 12px; font-weight: 800; text-transform: uppercase; }
+    .overview-grid { display: grid; grid-template-columns: minmax(240px, 1fr) repeat(3, max-content); gap: 8px; align-items: stretch; }
+    .status-card, .metric-card, .project-card { border: 1px solid var(--line); border-radius: 8px; background: linear-gradient(180deg, rgba(29,31,37,.96), rgba(18,19,24,.96)); box-shadow: 0 18px 70px rgba(0,0,0,.25); }
+    .status-card { min-height: 58px; padding: 10px 12px; display: grid; gap: 2px; align-content: center; }
+    .status-card span, .metric-card span { color: var(--muted); font-size: 10px; font-weight: 800; text-transform: uppercase; }
+    .status-card strong { font-size: 16px; line-height: 1.1; }
+    .metric-card { min-width: 78px; min-height: 58px; padding: 9px 11px; display: grid; gap: 2px; align-content: center; }
+    .metric-card strong { font-size: 20px; line-height: 1; }
+    .project-list { display: grid; gap: 12px; }
+    .project-card { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 14px; padding: 16px; }
+    .project-main { min-width: 0; }
+    .project-side { display: grid; gap: 8px; align-content: start; justify-items: start; }
+    .project-metrics { display: flex; flex-wrap: wrap; gap: 6px; color: var(--muted); font-size: 12px; }
+    .path { margin-top: 10px; font-size: 12px; overflow-wrap: anywhere; }
+    .note-row-meta, .section-title-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; }
+    .section-title-row { justify-content: space-between; color: var(--ink); }
+    .status, .kind { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); font-weight: 700; }
+    .kind { color: var(--blue); background: rgba(139,211,255,.08); border-color: rgba(139,211,255,.3); }
+    .status-complete { color: var(--green); background: rgba(119,217,154,.08); border-color: rgba(119,217,154,.35); }
+    .status-risk { color: var(--red); background: rgba(255,123,114,.08); border-color: rgba(255,123,114,.35); }
+    .status-active { color: var(--amber); background: rgba(244,201,93,.08); border-color: rgba(244,201,93,.35); }
+    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 7px 12px; border-radius: 7px; border: 1px solid rgba(139,211,255,.45); background: var(--blue); color: #071016; font-weight: 800; text-decoration: none; }
+    .button.secondary { border-color: var(--line); background: #0d0e12; color: var(--ink); }
+    .muted { color: var(--muted); }
+    @media (max-width: 760px) { header { padding: 16px; } main { padding: 14px; } .header-row, .project-card { display: grid; grid-template-columns: 1fr; } .overview-grid { grid-template-columns: 1fr 1fr 1fr; } .status-card { grid-column: 1 / -1; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-row">
+      <div>
+        <p class="eyebrow">Loop Wiki</p>
+        <h1>${escapeHtml(locale === "ko" ? "모든 프로젝트" : "All Projects")}</h1>
+      </div>
+    </div>
+  </header>
+  <main>
+    <section class="overview-grid">
+      <div class="status-card"><span>${escapeHtml(locale === "ko" ? "등록 프로젝트" : "Registered projects")}</span><strong>${projects.length}</strong></div>
+      <div class="metric-card"><span>${escapeHtml(text.runs)}</span><strong>${runCount}</strong></div>
+      <div class="metric-card"><span>${escapeHtml(text.attached)}</span><strong>${attachedCount}</strong></div>
+      <div class="metric-card"><span>${escapeHtml(text.total)}</span><strong>${allNotes.length}</strong></div>
+    </section>
+    <section>
+      <div class="section-title-row"><h2>${escapeHtml(locale === "ko" ? "프로젝트 스택" : "Project Stack")}</h2><span>${projects.length}</span></div>
+      <div class="project-list">${projectCards}</div>
+    </section>
+  </main>
+</body>
+</html>`;
+}
+
+/**
+ * @param {WikiIndexEntry[]} notes
+ * @param {{ confirmationTokenFor?: (input: { action: string, targetId: string }) => string, basePath?: string }} [options]
+ */
+export function renderWikiDashboardHtml(notes, { confirmationTokenFor = () => "", basePath = "" } = {}) {
   const locale = localeForNotes(notes);
   const text = wikiText(locale);
   const recent = notes[0];
@@ -1758,7 +1879,7 @@ export function renderWikiDashboardHtml(notes, { confirmationTokenFor = () => ""
    * @param {string} label
    */
   const deleteNoteForm = (id, buttonClass, label) => `
-              <form method="post" action="/actions/delete-note">
+              <form method="post" action="${routePath(basePath, "/actions/delete-note")}">
                 ${hiddenInput("id", id)}
                 ${tokenInput("delete-note", id)}
                 <button class="${escapeHtml(buttonClass)}" type="submit">${escapeHtml(label)}</button>
@@ -1776,7 +1897,7 @@ export function renderWikiDashboardHtml(notes, { confirmationTokenFor = () => ""
     return `
           <section class="local-actions-panel" aria-label="${escapeHtml(text.localActions)}">
             <div class="section-title-row"><h4>${escapeHtml(text.localActions)}</h4><span>${escapeHtml(runNote.runId)}</span></div>
-            <form class="stack-form note-form" method="post" action="/actions/add-note">
+            <form class="stack-form note-form" method="post" action="${routePath(basePath, "/actions/add-note")}">
               ${hiddenInput("targetId", runNote.id)}
               ${hiddenInput("runId", runNote.runId)}
               ${hiddenInput("parentId", runNote.id)}
@@ -1786,13 +1907,13 @@ export function renderWikiDashboardHtml(notes, { confirmationTokenFor = () => ""
               <textarea name="body" rows="3" placeholder="${escapeHtml(text.noteBody)}"></textarea>
               <button class="button secondary" type="submit">${escapeHtml(text.addNote)}</button>
             </form>
-            <form class="stack-form inline-form" method="post" action="/actions/verify-run">
+            <form class="stack-form inline-form" method="post" action="${routePath(basePath, "/actions/verify-run")}">
               ${hiddenInput("id", runNote.runId)}
               ${tokenInput("verify-run", runNote.runId)}
               <input name="summary" autocomplete="off" placeholder="${escapeHtml(text.evidenceSummary)}">
               <button class="button secondary" type="submit">${escapeHtml(text.verify)}</button>
             </form>
-            <form class="stack-form inline-form" method="post" action="/actions/follow-up">
+            <form class="stack-form inline-form" method="post" action="${routePath(basePath, "/actions/follow-up")}">
               ${hiddenInput("parentRunId", runNote.runId)}
               ${tokenInput("follow-up-run", runNote.runId)}
               <select name="agent" aria-label="${escapeHtml(text.agentChoice)}">
@@ -1803,18 +1924,18 @@ export function renderWikiDashboardHtml(notes, { confirmationTokenFor = () => ""
               <button class="button ghost" type="submit">${escapeHtml(text.followUp)}</button>
             </form>
             <div class="danger-row">
-              <form method="post" action="/actions/open-codex">
+              <form method="post" action="${routePath(basePath, "/actions/open-codex")}">
                 ${hiddenInput("id", runNote.runId)}
                 ${tokenInput("open-codex", runNote.runId)}
                 <button class="button ghost" type="submit">${escapeHtml(text.openCodex)}</button>
               </form>
-              <form method="post" action="/actions/mark-complete">
+              <form method="post" action="${routePath(basePath, "/actions/mark-complete")}">
                 ${hiddenInput("id", runNote.runId)}
                 ${hiddenInput("summary", locale === "ko" ? "Loop Wiki 대시보드에서 완료 처리했습니다." : "Marked complete from the Loop Wiki dashboard.")}
                 ${tokenInput("mark-complete", runNote.runId)}
                 <button class="button secondary" type="submit">${escapeHtml(text.markComplete)}</button>
               </form>
-              <form method="post" action="/actions/delete-run">
+              <form method="post" action="${routePath(basePath, "/actions/delete-run")}">
                 ${hiddenInput("id", runNote.runId)}
                 ${tokenInput("delete-run", runNote.runId)}
                 <button class="button danger" type="submit">${escapeHtml(text.deleteRun)}</button>
@@ -1845,7 +1966,7 @@ export function renderWikiDashboardHtml(notes, { confirmationTokenFor = () => ""
               <p>${escapeHtml(child.summary)}</p>
             </div>
             <div class="inline-actions">
-              <a class="text-link" href="/notes/${encodeURIComponent(child.id)}">${escapeHtml(text.read)}</a>
+              <a class="text-link" href="${routePath(basePath, `/notes/${encodeURIComponent(child.id)}`)}">${escapeHtml(text.read)}</a>
               ${deleteNoteForm(child.id, "text-danger", text.delete)}
             </div>
           </article>`).join("");
@@ -1857,7 +1978,7 @@ export function renderWikiDashboardHtml(notes, { confirmationTokenFor = () => ""
     const children = childrenByParent.get(runNote.id) ?? [];
     const childRows = renderAttachedRows(children);
     const logLink = runNote.runId
-      ? `<a class="button ghost" href="/runs/${encodeURIComponent(runNote.runId)}/log">${escapeHtml(text.viewLog)}</a>`
+      ? `<a class="button ghost" href="${routePath(basePath, `/runs/${encodeURIComponent(runNote.runId)}/log`)}">${escapeHtml(text.viewLog)}</a>`
       : "";
     return `
       <article class="run-stack">
@@ -1870,7 +1991,7 @@ export function renderWikiDashboardHtml(notes, { confirmationTokenFor = () => ""
           <h3>${escapeHtml(runNote.title)}</h3>
           <p>${escapeHtml(runNote.summary)}</p>
           <div class="card-actions">
-            <a class="button secondary" href="/notes/${encodeURIComponent(runNote.id)}">${escapeHtml(text.readNote)}</a>
+            <a class="button secondary" href="${routePath(basePath, `/notes/${encodeURIComponent(runNote.id)}`)}">${escapeHtml(text.readNote)}</a>
             ${logLink}
             ${deleteNoteForm(runNote.id, "button danger", text.deleteNote)}
           </div>
@@ -1999,7 +2120,7 @@ export function renderWikiDashboardHtml(notes, { confirmationTokenFor = () => ""
         <h1>${escapeHtml(text.secondBrain)}</h1>
       </div>
       <nav class="actions" aria-label="Wiki views">
-        <a class="button" href="/graph">${escapeHtml(text.graphView)}</a>
+        <a class="button" href="${routePath(basePath, "/graph")}">${escapeHtml(text.graphView)}</a>
       </nav>
     </div>
   </header>
@@ -2023,8 +2144,9 @@ export function renderWikiDashboardHtml(notes, { confirmationTokenFor = () => ""
 
 /**
  * @param {WikiIndexEntry[]} notes
+ * @param {{ basePath?: string }} [options]
  */
-export function renderWikiGraphHtml(notes) {
+export function renderWikiGraphHtml(notes, { basePath = "" } = {}) {
   const locale = localeForNotes(notes);
   const text = wikiText(locale);
   const edges = graphEdges(notes);
@@ -2081,10 +2203,10 @@ export function renderWikiGraphHtml(notes) {
     <div>
       <h1>${escapeHtml(text.graphView)}</h1>
     </div>
-    <a class="button" href="/">${escapeHtml(text.backToNotes)}</a>
+    <a class="button" href="${routePath(basePath, "/")}">${escapeHtml(text.backToNotes)}</a>
   </header>
   <main>
-    <section class="graph-stage">${renderGraphSvg(notes)}</section>
+    <section class="graph-stage">${renderGraphSvg(notes, { basePath })}</section>
     <aside class="side-panel">
       <h2>${escapeHtml(text.readableConnections)}</h2>
       ${edgeSummary}
@@ -2096,21 +2218,21 @@ export function renderWikiGraphHtml(notes) {
 
 /**
  * @param {string} markdown
- * @param {{ noteId?: string, confirmationTokenFor?: (input: { action: string, targetId: string }) => string }} [options]
+ * @param {{ noteId?: string, confirmationTokenFor?: (input: { action: string, targetId: string }) => string, basePath?: string }} [options]
  */
-export function renderMarkdownHtml(markdown, { noteId, confirmationTokenFor = () => "" } = {}) {
+export function renderMarkdownHtml(markdown, { noteId, confirmationTokenFor = () => "", basePath = "" } = {}) {
   const locale = hasHangul(markdown) ? "ko" : "en";
   const text = wikiText(locale);
   const toolbar = noteId
     ? `<nav class="toolbar" aria-label="Note actions">
-        <a class="button" href="/">${escapeHtml(text.backToNotes)}</a>
-        <form method="post" action="/actions/delete-note">
+        <a class="button" href="${routePath(basePath, "/")}">${escapeHtml(text.backToNotes)}</a>
+        <form method="post" action="${routePath(basePath, "/actions/delete-note")}">
           <input type="hidden" name="id" value="${escapeHtml(noteId)}">
           <input type="hidden" name="confirmationToken" value="${escapeHtml(confirmationTokenFor({ action: "delete-note", targetId: noteId }))}">
           <button class="button danger" type="submit">${escapeHtml(text.deleteNote)}</button>
         </form>
       </nav>`
-    : `<nav class="toolbar" aria-label="Note actions"><a class="button" href="/">${escapeHtml(text.backToNotes)}</a></nav>`;
+    : `<nav class="toolbar" aria-label="Note actions"><a class="button" href="${routePath(basePath, "/")}">${escapeHtml(text.backToNotes)}</a></nav>`;
   return `<!doctype html>
 <html lang="${text.lang}">
 <head>
@@ -2165,9 +2287,9 @@ function jsonScript(value) {
 }
 
 /**
- * @param {{ id: string, log: string, state?: import("./run-state.js").LoopRunState | null, stateDir?: string }} input
+ * @param {{ id: string, log: string, state?: import("./run-state.js").LoopRunState | null, stateDir?: string, basePath?: string }} input
  */
-export function renderRunLogHtml({ id, log, state = null, stateDir }) {
+export function renderRunLogHtml({ id, log, state = null, stateDir, basePath = "" }) {
   const locale = isRecord(state) && typeof state.objective === "string" && hasHangul(state.objective)
     ? "ko"
     : hasHangul(log) ? "ko" : "en";
@@ -2248,7 +2370,7 @@ export function renderRunLogHtml({ id, log, state = null, stateDir }) {
         <h1>${escapeHtml(text.liveRunLog)}</h1>
         <p>${escapeHtml(objective)}</p>
       </div>
-      <a class="button" href="/">${escapeHtml(text.backToNotes)}</a>
+      <a class="button" href="${routePath(basePath, "/")}">${escapeHtml(text.backToNotes)}</a>
     </header>
     <section class="layout">
       <div class="terminal">
@@ -2301,7 +2423,7 @@ export function renderRunLogHtml({ id, log, state = null, stateDir }) {
     }
     async function pollLog() {
       try {
-        const response = await fetch("/api/runs/" + encodeURIComponent(boot.id) + "/log", { cache: "no-store" });
+        const response = await fetch(${JSON.stringify(routePath(basePath, "/api/runs/"))} + encodeURIComponent(boot.id) + "/log", { cache: "no-store" });
         if (!response.ok) {
           throw new Error(String(response.status));
         }

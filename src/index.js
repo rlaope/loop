@@ -31,6 +31,14 @@ export {
   shouldSendLoopNotification
 } from "./core/notifications.js";
 export { evaluatePolicyGate } from "./core/policy.js";
+export {
+  listLoopProjects,
+  loopProjectRegistryPath,
+  readLoopProject,
+  readLoopProjectRegistry,
+  registerLoopProject,
+  writeLoopProjectRegistry
+} from "./core/project-registry.js";
 export { appendEvidence, createRunState, slugifyObjective, transitionRunState } from "./core/run-state.js";
 export { assertValidRunState, validateRunState } from "./core/schema.js";
 export { evaluateStopCondition } from "./core/stop.js";
@@ -50,6 +58,7 @@ export {
   noteIdForRunState,
   readWikiIndex,
   readWikiNote,
+  renderGlobalWikiDashboardHtml,
   renderMarkdownHtml,
   renderRunLogHtml,
   renderWikiDashboardHtml,
@@ -159,5 +168,5 @@ export function printHelp(stream) {
   stream.write(`Demo mode prints example workflows without writing state, starting services, or launching agents.\n`);
   stream.write(`Dry-run mode writes durable Loop state and local wiki artifacts only.\n`);
   stream.write(`Run mode records state, creates a local git boundary when needed, asks clarifying questions, then launches the selected agent.\n`);
-  stream.write(`Wiki mode reads local .loop/wiki notes and opens a localhost dashboard with graph, note, log, follow-up, and Codex-open controls.\n`);
+  stream.write(`Wiki mode reads local .loop/wiki notes; loop wiki opens a global localhost dashboard that indexes all registered Loop projects.\n`);
 }

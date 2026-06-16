@@ -7,6 +7,9 @@ import { createServer as createNetServer } from "node:net";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
+const testRegistryRoot = await mkdtemp(join(tmpdir(), "loop-adapter-registry-"));
+process.env.LOOP_PROJECT_REGISTRY = join(testRegistryRoot, "projects.json");
+
 /** @param {string} command */
 function commandExists(command) {
   const result = spawnSync(command, ["--version"], { encoding: "utf8" });
@@ -234,7 +237,7 @@ async function startExternalDashboard(port) {
     "const server = createServer((request, response) => {",
     "  if (request.url === '/health') {",
     "    response.writeHead(200, { 'content-type': 'application/json' });",
-    "    response.end(JSON.stringify({ ok: true, name: 'loop-wiki' }) + '\\n');",
+    "    response.end(JSON.stringify({ ok: true, name: 'loop-wiki', mode: 'global' }) + '\\n');",
     "    return;",
     "  }",
     "  response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });",

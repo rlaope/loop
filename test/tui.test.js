@@ -286,6 +286,37 @@ test("TUI one-shot mode renders local state without waiting for input", async ()
   assert.match(text, /Render TUI objective/);
 });
 
+test("TUI dashboard status follows custom dashboard port", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-tui-custom-port-"));
+  const input = /** @type {PassThrough & { isTTY?: boolean }} */ (new PassThrough());
+  const output = /** @type {PassThrough & { isTTY?: boolean }} */ (new PassThrough());
+  input.isTTY = true;
+  output.isTTY = true;
+  let text = "";
+  /** @type {Array<{ host?: string, port?: number, timeoutMs?: number }>} */
+  const probes = [];
+  output.on("data", (chunk) => {
+    text += String(chunk);
+  });
+
+  await runLoopTui({
+    stateDir,
+    input,
+    output,
+    once: true,
+    clearScreen: false,
+    dashboardPort: 45678,
+    getDashboardStatusImpl: async (options = {}) => {
+      probes.push(options);
+      return { running: true, occupied: false };
+    }
+  });
+
+  assert.equal(probes[0]?.port, 45678);
+  assert.match(text, /Wiki dashboard: online/);
+  assert.match(text, /http:\/\/127\.0\.0\.1:45678/);
+});
+
 test("TUI processing mode follows a run promise without opening the command prompt", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "loop-tui-processing-"));
   const state = createRunState({

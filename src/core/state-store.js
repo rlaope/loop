@@ -1,5 +1,6 @@
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { join, resolve, sep } from "node:path";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, join, resolve, sep } from "node:path";
 
 import { assertValidRunState } from "./schema.js";
 
@@ -75,6 +76,22 @@ function latestIndexPath(stateDir) {
 }
 
 /**
+ * @param {string} path
+ * @param {string} contents
+ */
+async function atomicWriteFile(path, contents) {
+  const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  await mkdir(dirname(path), { recursive: true });
+  try {
+    await writeFile(tempPath, contents);
+    await rename(tempPath, path);
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+/**
  * @param {string} stateDir
  * @returns {Promise<
  *   { ok: true, index: Record<string, string> } |
@@ -137,7 +154,7 @@ async function readLatestIndex(stateDir) {
  * @param {Record<string, string>} index
  */
 async function writeLatestIndex(stateDir, index) {
-  await writeFile(latestIndexPath(stateDir), `${JSON.stringify(index, null, 2)}\n`);
+  await atomicWriteFile(latestIndexPath(stateDir), `${JSON.stringify(index, null, 2)}\n`);
 }
 
 /**
@@ -181,8 +198,8 @@ export async function writeRunState(state, { stateDir = DEFAULT_STATE_DIR } = {}
 
   const jsonPath = safeRunPath(runsDir, state.id, ".json");
   const summaryPath = safeRunPath(runsDir, state.id, ".md");
-  await writeFile(jsonPath, `${JSON.stringify(state, null, 2)}\n`);
-  await writeFile(summaryPath, renderRunSummary(state));
+  await atomicWriteFile(jsonPath, `${JSON.stringify(state, null, 2)}\n`);
+  await atomicWriteFile(summaryPath, renderRunSummary(state));
   const latestIndex = await readLatestIndex(stateDir);
   if (!latestIndex.ok) {
     throw new Error(`Corrupt latest-run index: ${latestIndex.error.message ?? latestIndex.error.kind}`);

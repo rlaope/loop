@@ -65,9 +65,10 @@ Loop is built around six working components:
   intent, and opening Codex resume actions from a TUI.
 - `loop wiki` commands for listing, reading, opening, serving, deleting, and
   adding local second-brain notes.
-- A localhost-only Loop Wiki dashboard with graph view, markdown note reading,
-  live log pages, token-confirmed local actions, follow-up command preparation,
-  and a button to open Codex in a separate terminal when a Codex session exists.
+- A localhost-only global Loop Wiki dashboard that indexes registered projects
+  from `~/.loop/projects.json`, then opens per-project graph views, markdown
+  notes, live log pages, token-confirmed local actions, follow-up command
+  preparation, and Codex terminal actions.
 
 ## Quickstart
 
@@ -92,12 +93,12 @@ If the folder is not a git repository yet, `loop` initializes a local git
 repository there first. That keeps write-capable agent work bounded to the
 folder you started from, even when the folder lives inside a larger parent repo.
 
-`loop "prompt"` asks you to type `1` or `2` to choose the prototype agent, then
-opens the Prompt Console processing view in the same terminal. The agent output
-is captured in the run log while the TUI shows the current run state, selected
-agent, wiki dashboard status, next action, graph count, and live log tail. When
-the agent exits, Loop finishes the state/wiki update and leaves you in the
-normal Prompt Console.
+`loop "prompt"` asks you to type `1` or `2` to choose the prototype agent, starts
+or opens the localhost Loop Wiki dashboard, then opens the Prompt Console
+processing view in the same terminal. The agent output is captured in the run
+log while the TUI shows the current run state, selected agent, wiki dashboard
+status, next action, graph count, and live log tail. When the agent exits, Loop
+finishes the state/wiki update and leaves you in the normal Prompt Console.
 
 Use `loop run "prompt"` when you want the older explicit CLI stream that prints
 agent output and returns JSON for scripts. If you like the short command but
@@ -145,9 +146,11 @@ style set of questions in the terminal, closes the interview, records the
 clarified objective, and then starts the selected coding agent.
 
 When a Loop Wiki dashboard is already running, `loop "prompt"` and `loop run`
-open it automatically. If it is not running in an interactive terminal, Loop
-asks whether to start it; choosing Yes starts the localhost dashboard and opens
-it in your browser.
+open it automatically. Direct `loop "prompt"` starts it automatically because
+the processing TUI expects live Wiki observability. Explicit `loop run "prompt"`
+keeps the older CLI stream behavior and asks before starting the dashboard in an
+interactive terminal. In non-interactive automation, pass `--wiki-dashboard` if
+you want the dashboard process started.
 
 Interactive CLI runs also send best-effort system notifications when the agent
 starts, when Loop needs human attention, and when the agent finishes and needs
@@ -188,12 +191,18 @@ loop wiki delete <note-id>
 loop wiki
 ```
 
-`loop wiki` starts and opens a localhost-only dashboard for `.loop/wiki`. The
-main run note under `.loop/wiki/user` is canonical for the loop session; AI
-memory, index, and graph files are derived from the local wiki. `loop run` does
-not start the dashboard in non-interactive automation unless `--wiki-dashboard`
-is passed. Most users can ignore that flag and open the dashboard later with
-`loop wiki`.
+`loop wiki` starts and opens the localhost-only global dashboard. The home page
+is intentionally not tied to only the current folder: it reads the global
+project registry at `~/.loop/projects.json` and shows every registered Loop
+project on one screen. Running `loop "prompt"`, `loop run`, or `loop wiki` from a
+project registers that project. Click a project card to open its project-scoped
+Wiki under `/projects/<id>`.
+
+The main run note under each project's `.loop/wiki/user` directory is canonical
+for that loop session; AI memory, index, and graph files are derived from that
+local wiki. CLI commands such as `loop wiki list`, `loop wiki read`, and
+`loop wiki add` still operate on the current project's `.loop` unless you pass
+`--state-dir`.
 
 The dashboard is also a local action surface. Each run stack can add attached
 notes, record verification, mark the run complete, prepare a follow-up command

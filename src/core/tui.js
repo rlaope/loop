@@ -53,15 +53,17 @@ export function directPromptTuiDispatch({ hasCommand, stdinTTY, stdoutTTY, justR
 }
 
 /**
- * @param {{ stateDir?: string, selectedRunId?: string | null, agent?: "codex" | "claudecode", getDashboardStatusImpl?: typeof getDashboardStatus }} [options]
+ * @param {{ stateDir?: string, selectedRunId?: string | null, agent?: "codex" | "claudecode", dashboardHost?: string, dashboardPort?: number, getDashboardStatusImpl?: typeof getDashboardStatus }} [options]
  */
 async function loadSnapshot({
   stateDir = ".loop",
   selectedRunId = null,
   agent = "codex",
+  dashboardHost,
+  dashboardPort,
   getDashboardStatusImpl = getDashboardStatus
 } = {}) {
-  const dashboardProbe = getDashboardStatusImpl({ timeoutMs: 80 })
+  const dashboardProbe = getDashboardStatusImpl({ host: dashboardHost, port: dashboardPort, timeoutMs: 80 })
     .then((status) => {
       if (!status.running && status.occupied) {
         return { running: false, occupied: false, unknown: true };
@@ -85,7 +87,7 @@ async function loadSnapshot({
     graph: graph.graph,
     dashboard: {
       ...dashboardStatus,
-      url: dashboardUrl()
+      url: dashboardUrl({ host: dashboardHost, port: dashboardPort })
     },
     notice: "",
     selectedRunId: selected?.id ?? null,
@@ -130,6 +132,8 @@ function terminalWidth(output) {
  *   launchTerminalCommandImpl?: typeof launchTerminalCommand,
  *   serveWikiDashboardImpl?: typeof serveWikiDashboard,
  *   getDashboardStatusImpl?: typeof getDashboardStatus,
+ *   dashboardHost?: string,
+ *   dashboardPort?: number,
  *   initialSelectedRunId?: string | null,
  *   initialAgent?: "codex" | "claudecode"
  * }} [options]
@@ -145,6 +149,8 @@ export async function runLoopTui({
   launchTerminalCommandImpl = launchTerminalCommand,
   serveWikiDashboardImpl = serveWikiDashboard,
   getDashboardStatusImpl = getDashboardStatus,
+  dashboardHost,
+  dashboardPort,
   initialSelectedRunId = null,
   initialAgent = "codex"
 } = {}) {
@@ -160,7 +166,14 @@ export async function runLoopTui({
   const rl = createInterface({ input, output });
   try {
     while (true) {
-      const snapshot = await loadSnapshot({ stateDir, selectedRunId, agent, getDashboardStatusImpl });
+      const snapshot = await loadSnapshot({
+        stateDir,
+        selectedRunId,
+        agent,
+        dashboardHost,
+        dashboardPort,
+        getDashboardStatusImpl
+      });
       selectedRunId = snapshot.selectedRunId;
       const useColor = shouldUseTuiColor({ isTTY: output.isTTY, env });
       if (clearScreen) {
@@ -203,9 +216,9 @@ export async function runLoopTui({
       }
       if (action === "dashboard") {
         try {
-          const url = dashboardUrl();
+          const url = dashboardUrl({ host: dashboardHost, port: dashboardPort });
           if (!dashboardServer) {
-            const served = await serveWikiDashboardImpl({ stateDir });
+            const served = await serveWikiDashboardImpl({ stateDir, host: dashboardHost, port: dashboardPort });
             if (served.server) {
               dashboardServer = served.server;
             }
@@ -379,6 +392,8 @@ export async function runLoopTui({
  *   env?: NodeJS.ProcessEnv,
  *   intervalMs?: number,
  *   continueToConsole?: boolean
+ *   dashboardHost?: string,
+ *   dashboardPort?: number
  * }} options
  */
 export async function runLoopProcessingTui({
@@ -391,7 +406,9 @@ export async function runLoopProcessingTui({
   clearScreen = true,
   env = process.env,
   intervalMs = 900,
-  continueToConsole = true
+  continueToConsole = true,
+  dashboardHost,
+  dashboardPort
 }) {
   if (!input.isTTY || !output.isTTY) {
     throw new Error("Loop Prompt Console requires an interactive terminal.");
@@ -413,7 +430,7 @@ export async function runLoopProcessingTui({
   while (!settled) {
     const useColor = shouldUseTuiColor({ isTTY: output.isTTY, env });
     const [snapshot, tail] = await Promise.all([
-      loadSnapshot({ stateDir, selectedRunId: runId, agent }),
+      loadSnapshot({ stateDir, selectedRunId: runId, agent, dashboardHost, dashboardPort }),
       readRunLogTailAction({ stateDir, id: runId, maxLines: 24 }).catch(() => ({ log: "" }))
     ]);
     if (clearScreen) {
@@ -443,7 +460,7 @@ export async function runLoopProcessingTui({
   }
 
   const [snapshot, tail] = await Promise.all([
-    loadSnapshot({ stateDir, selectedRunId: runId, agent }),
+    loadSnapshot({ stateDir, selectedRunId: runId, agent, dashboardHost, dashboardPort }),
     readRunLogTailAction({ stateDir, id: runId, maxLines: 24 }).catch(() => ({ log: "" }))
   ]);
   const useColor = shouldUseTuiColor({ isTTY: output.isTTY, env });
@@ -466,6 +483,8 @@ export async function runLoopProcessingTui({
       output,
       clearScreen,
       env,
+      dashboardHost,
+      dashboardPort,
       initialSelectedRunId: runId,
       initialAgent: agent
     });

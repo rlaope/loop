@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { appendFile, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -31,6 +31,22 @@ test("writes machine-readable state and human-readable summary", async () => {
   assert.equal(read.ok, true);
   assert.equal(read.ok && read.state.objective, "Persist memory");
   assert.equal(latestIndex["persist-memory"], state.id);
+});
+
+test("run state writes do not leave atomic temp files behind", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-state-atomic-"));
+  const state = createRunState({
+    objective: "Atomic state",
+    now: new Date("2026-06-13T00:00:00.000Z")
+  });
+
+  await writeRunState(state, { stateDir });
+  await writeRunState({ ...state, updatedAt: new Date("2026-06-13T00:01:00.000Z").toISOString() }, { stateDir });
+  const stateFiles = await readdir(stateDir);
+  const runFiles = await readdir(join(stateDir, "runs"));
+
+  assert.equal(stateFiles.some((file) => file.endsWith(".tmp")), false);
+  assert.equal(runFiles.some((file) => file.endsWith(".tmp")), false);
 });
 
 test("reads latest run by objective slug", async () => {

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { createServer as createHttpServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -14,6 +15,7 @@ import {
   dashboardActionForRun,
   getDashboardStatus,
   listWikiNotes,
+  registerLoopProject,
   noteIdForRunState,
   readRunState,
   readWikiNote,
@@ -41,6 +43,16 @@ async function getFreePort() {
   server.close();
   await once(server, "close");
   return port;
+}
+
+/**
+ * @param {Parameters<typeof serveWikiDashboard>[0] & { stateDir: string }} options
+ */
+async function serveTestWikiDashboard(options) {
+  return serveWikiDashboard({
+    registryPath: join(options.stateDir, "test-registry", "projects.json"),
+    ...options
+  });
 }
 
 test("writes canonical markdown and derived AI memory", async () => {
@@ -458,7 +470,7 @@ test("dashboard server serves the graph view route", async () => {
     now: new Date("2026-06-13T08:00:00.000Z")
   });
   const port = await getFreePort();
-  const served = await serveWikiDashboard({ stateDir, port });
+  const served = await serveTestWikiDashboard({ stateDir, port });
   await writeWikiForRunState(state, { stateDir, now: new Date("2026-06-13T08:01:00.000Z") });
 
   try {
@@ -469,6 +481,58 @@ test("dashboard server serves the graph view route", async () => {
     assert.match(html, /Graph View/);
     assert.match(html, /Back to notes/);
     assert.match(html, /<svg viewBox="0 0 1100 680"/);
+  } finally {
+    if (served.server) {
+      served.server.close();
+      await once(served.server, "close");
+    }
+  }
+});
+
+test("dashboard home aggregates Loop Wiki projects from the global registry", async () => {
+  const root = await mkdtemp(join(tmpdir(), "loop-global-dashboard-"));
+  const projectOne = join(root, "feedback-saas");
+  const projectTwo = join(root, "darkwear-exhibit");
+  const stateDirOne = join(projectOne, ".loop");
+  const stateDirTwo = join(projectTwo, ".loop");
+  const registryPath = join(root, "registry", "projects.json");
+  const stateOne = createRunState({
+    objective: "Build customer feedback dashboard",
+    now: new Date("2026-06-13T08:00:00.000Z")
+  });
+  const stateTwo = createRunState({
+    objective: "다크웨어 전시 사이트를 만든다",
+    now: new Date("2026-06-13T09:00:00.000Z")
+  });
+  await writeRunState(stateOne, { stateDir: stateDirOne });
+  await writeRunState(stateTwo, { stateDir: stateDirTwo });
+  await writeFile(runLogPath({ stateDir: stateDirOne, id: stateOne.id }), "feedback log\n");
+  await writeWikiForRunState(stateOne, { stateDir: stateDirOne });
+  await writeWikiForRunState(stateTwo, { stateDir: stateDirTwo });
+  const entryOne = await registerLoopProject({ cwd: projectOne, stateDir: ".loop", registryPath, now: new Date("2026-06-13T10:00:00.000Z") });
+  const entryTwo = await registerLoopProject({ cwd: projectTwo, stateDir: ".loop", registryPath, now: new Date("2026-06-13T11:00:00.000Z") });
+  const port = await getFreePort();
+  const served = await serveTestWikiDashboard({ stateDir: stateDirOne, cwd: projectOne, port, registryPath });
+
+  try {
+    const home = await fetch(`http://127.0.0.1:${port}/`);
+    const homeHtml = await home.text();
+    const project = await fetch(`http://127.0.0.1:${port}/projects/${entryOne.id}`);
+    const projectHtml = await project.text();
+    const log = await fetch(`http://127.0.0.1:${port}/projects/${entryOne.id}/api/runs/${stateOne.id}/log`);
+    const logPayload = await log.json();
+
+    assert.equal(home.status, 200);
+    assert.match(homeHtml, /All Projects|모든 프로젝트/);
+    assert.match(homeHtml, /feedback-saas/);
+    assert.match(homeHtml, /darkwear-exhibit/);
+    assert.match(homeHtml, new RegExp(`/projects/${entryOne.id}`));
+    assert.match(homeHtml, new RegExp(`/projects/${entryTwo.id}`));
+    assert.equal(project.status, 200);
+    assert.match(projectHtml, /Build customer feedback dashboard/);
+    assert.match(projectHtml, new RegExp(`/projects/${entryOne.id}/runs/${stateOne.id}/log`));
+    assert.equal(log.status, 200);
+    assert.equal(logPayload.log, "feedback log\n");
   } finally {
     if (served.server) {
       served.server.close();
@@ -494,7 +558,7 @@ test("dashboard server serves live run log API", async () => {
   const port = await getFreePort();
   await writeRunState(state, { stateDir });
   await writeFile(runLogPath({ stateDir, id: state.id }), "agent streamed line\n");
-  const served = await serveWikiDashboard({ stateDir, port });
+  const served = await serveTestWikiDashboard({ stateDir, port });
 
   try {
     const response = await fetch(`http://127.0.0.1:${port}/api/runs/${state.id}/log`);
@@ -520,7 +584,7 @@ test("dashboard server deletes wiki notes by post route", async () => {
   });
   const port = await getFreePort();
   const confirmationSecret = "test-dashboard-secret";
-  const served = await serveWikiDashboard({ stateDir, port, confirmationSecret });
+  const served = await serveTestWikiDashboard({ stateDir, port, confirmationSecret });
   const paths = await writeWikiForRunState(state, { stateDir, now: new Date("2026-06-13T08:01:00.000Z") });
   const token = createDashboardConfirmationToken({
     action: "delete-note",
@@ -565,7 +629,7 @@ test("dashboard action endpoints add notes and update run state with confirmatio
   const confirmationSecret = "test-dashboard-actions-secret";
   await writeRunState(state, { stateDir });
   const paths = await writeWikiForRunState(state, { stateDir, now: new Date("2026-06-13T08:01:00.000Z") });
-  const served = await serveWikiDashboard({ stateDir, port, confirmationSecret });
+  const served = await serveTestWikiDashboard({ stateDir, port, confirmationSecret });
 
   try {
     const addNote = await fetch(`http://127.0.0.1:${port}/actions/add-note`, {
@@ -679,7 +743,7 @@ test("dashboard follow-up and open-codex actions use confirmation and effect ada
   await writeRunState(state, { stateDir });
   await writeFile(runLogPath({ stateDir, id: state.id }), "session id: 019ec4bd-7118-7443-8d6b-dce6b226eef3\n");
   await writeWikiForRunState(state, { stateDir, now: new Date("2026-06-13T08:01:00.000Z") });
-  const served = await serveWikiDashboard({
+  const served = await serveTestWikiDashboard({
     stateDir,
     port,
     confirmationSecret,
@@ -776,7 +840,7 @@ test("dashboard open-codex action does not launch without a concrete Codex sessi
   await writeRunState(state, { stateDir });
   await writeFile(runLogPath({ stateDir, id: state.id }), "codex started without a parseable session id\n");
   await writeWikiForRunState(state, { stateDir, now: new Date("2026-06-13T08:01:00.000Z") });
-  const served = await serveWikiDashboard({
+  const served = await serveTestWikiDashboard({
     stateDir,
     port,
     confirmationSecret,
@@ -821,7 +885,7 @@ test("dashboard confirmation tokens are bound to action target and expiry", asyn
   const port = await getFreePort();
   const confirmationSecret = "test-dashboard-token-secret";
   const paths = await writeWikiForRunState(state, { stateDir, now: new Date("2026-06-13T08:01:00.000Z") });
-  const served = await serveWikiDashboard({ stateDir, port, confirmationSecret });
+  const served = await serveTestWikiDashboard({ stateDir, port, confirmationSecret });
 
   try {
     const wrongAction = await fetch(`http://127.0.0.1:${port}/actions/delete-note`, {
@@ -869,7 +933,7 @@ test("dashboard server persists confirmation secret per state directory", async 
   const firstPort = await getFreePort();
   const secondPort = await getFreePort();
   let savedSecret = "";
-  const first = await serveWikiDashboard({ stateDir, port: firstPort });
+  const first = await serveTestWikiDashboard({ stateDir, port: firstPort });
 
   try {
     savedSecret = await readFile(join(stateDir, "dashboard-secret"), "utf8");
@@ -881,7 +945,7 @@ test("dashboard server persists confirmation secret per state directory", async 
     }
   }
 
-  const second = await serveWikiDashboard({ stateDir, port: secondPort });
+  const second = await serveTestWikiDashboard({ stateDir, port: secondPort });
   try {
     const secondSecret = await readFile(join(stateDir, "dashboard-secret"), "utf8");
     assert.equal(secondSecret, savedSecret);
@@ -1005,6 +1069,34 @@ test("dashboard status treats occupied non-http ports as occupied", async () => 
       timeoutMs: 100
     });
     assert.deepEqual(status, { running: false, occupied: true });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("dashboard status treats legacy project-only Loop Wiki servers as occupied", async () => {
+  const server = createHttpServer((request, response) => {
+    if (request.url === "/health") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(`${JSON.stringify({ ok: true, name: "loop-wiki" })}\n`);
+      return;
+    }
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    response.end("<!doctype html><title>Legacy Loop Wiki</title>");
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Expected HTTP server to listen on an address object");
+  }
+
+  try {
+    const status = await getDashboardStatus({ port: address.port });
+
+    assert.equal(status.running, false);
+    assert.equal(status.occupied, true);
   } finally {
     server.close();
     await once(server, "close");

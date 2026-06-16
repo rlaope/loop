@@ -32,6 +32,7 @@ import {
   readRunLog,
   readRunState,
   readWikiNote,
+  registerLoopProject,
   recordBudgetActivity,
   renderDemoGuide,
   renderDoctorReport,
@@ -799,7 +800,7 @@ function notifyLoopEvent(event, input, enabled) {
 async function maybeStartDashboardForRun({ stateDir, explicitFlag, host, port, askConsent = true }) {
   const status = await getDashboardStatus({ host, port });
   if (status.occupied) {
-    process.stderr.write(`Loop Wiki dashboard port ${port} is occupied by another service; not starting dashboard.\n`);
+    process.stderr.write(`Loop Wiki dashboard port ${port} is occupied by another or legacy service; not starting dashboard. Stop the old server or pass --port <port>.\n`);
     return;
   }
   const url = dashboardUrl({ host, port });
@@ -889,6 +890,7 @@ async function runAgent({
     process.stderr.write(`Project boundary failed: ${errorMessage(error)}\n`);
     process.exit(2);
   }
+  await registerLoopProject({ stateDir });
   /** @type {import("../src/core/run-state.js").RunLineage | undefined} */
   let lineage;
   if (parentRunId) {
@@ -944,7 +946,7 @@ async function runAgent({
   await writeWikiOrExit(state, paths, { stateDir, context: "initial run state" });
   await maybeStartDashboardForRun({
     stateDir,
-    explicitFlag: wikiDashboard,
+    explicitFlag: wikiDashboard || processingTui,
     host,
     port,
     askConsent: !processingTui
@@ -987,6 +989,8 @@ async function runAgent({
         runPromise,
         input: process.stdin,
         output: process.stdout,
+        dashboardHost: host,
+        dashboardPort: port,
         continueToConsole: false
       })
     : await runPromise);
@@ -1013,6 +1017,8 @@ async function runAgent({
     if (processingTui) {
       await runLoopTui({
         stateDir,
+        dashboardHost: host,
+        dashboardPort: port,
         initialSelectedRunId: failed.id,
         initialAgent: agent
       });
@@ -1051,6 +1057,8 @@ async function runAgent({
   if (processingTui) {
     await runLoopTui({
       stateDir,
+      dashboardHost: host,
+      dashboardPort: port,
       initialSelectedRunId: finalState.id,
       initialAgent: agent
     });
