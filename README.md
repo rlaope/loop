@@ -60,9 +60,10 @@ Loop is built around six working components:
   agent selection and optional goal clarification.
 - Best-effort desktop notifications on macOS, Windows, and Linux when a run
   starts, needs human attention, or finishes and needs review.
-- A no-argument `loop` Prompt Console for entering objectives, inspecting runs,
-  reading wiki notes, tailing logs, switching agent choice, preparing follow-up
-  intent, and opening Codex resume actions from a TUI.
+- A no-argument `loop` Prompt Console with keyboard-first navigation: move
+  between prompt, runs, selected run, status, and actions with Tab/arrows, then
+  press Enter to open run pickers, action menus, confirmations, notes, logs,
+  wiki context, follow-up prompts, agent choice, and Codex resume actions.
 - `loop wiki` commands for listing, reading, opening, serving, deleting, and
   adding local second-brain notes.
 - A localhost-only global Loop Wiki dashboard that indexes registered projects
@@ -116,14 +117,16 @@ loop --agent codex "Build a darkwear luxury exhibition site" --just-run
 ```
 
 After at least one run exists, typing only `loop` in an interactive terminal
-opens the local Prompt Console TUI. Use the prompt input to stage a new
-objective or connected follow-up, and use the keyboard action buttons to select
-a run, read wiki context, tail logs, add notes, record verification, mark a run
-complete, open the dashboard, or open/resume Codex in a new terminal
-tab when a concrete Codex session id has been recorded. Follow-up commands
-include `--parent-run` lineage so the next loop remains connected to the
-previous run. In non-interactive shells, no-argument `loop` prints guidance
-instead of waiting for input.
+opens the local Prompt Console TUI. Use Tab/Shift+Tab to move between sections,
+the arrow keys to move within a section, Enter to open/select, and Esc to back
+out of overlays. The prompt box stages a new objective or connected follow-up;
+the run stack and action menu let you select a run, read wiki context, tail
+logs, add two-field notes, record verification, confirm completion, open the
+dashboard, switch agent choice, or open/resume Codex in a new terminal tab when
+a concrete Codex session id has been recorded. Follow-up commands include
+`--parent-run` lineage so the next loop remains connected to the previous run.
+In non-interactive shells, no-argument `loop` prints guidance instead of waiting
+for input.
 
 If you want to try Loop without installing it first:
 
