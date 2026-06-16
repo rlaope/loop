@@ -130,6 +130,7 @@ export function printHelp(stream) {
   stream.write(`  --version, -v    Show the package version.\n`);
   stream.write(`  --dry-run        Write durable Loop state without source edits.\n`);
   stream.write(`  --agent          Select codex or claudecode without the 1/2 prompt.\n`);
+  stream.write(`  --just-run       Keep direct loop "prompt" in CLI stream mode instead of opening the processing TUI.\n`);
   stream.write(`  --read-only      Run the selected agent without write permissions.\n`);
   stream.write(`  --objective      Objective for the Loop run.\n`);
   stream.write(`  --state-dir      Directory for durable Loop state. Defaults to .loop.\n`);
@@ -153,7 +154,7 @@ export function printHelp(stream) {
   stream.write(`  --no-notify      Disable desktop notifications for this run.\n`);
   stream.write(`\n`);
   stream.write(`No-argument loop opens the local Agent Console TUI in an interactive terminal.\n`);
-  stream.write(`Direct loop "prompt" opens a processing TUI; loop run "prompt" keeps the explicit CLI stream.\n`);
+  stream.write(`Direct loop "prompt" opens a processing TUI; add --just-run or use loop run "prompt" for the explicit CLI stream.\n`);
   stream.write(`Doctor mode checks local readiness without writing state or launching agents.\n`);
   stream.write(`Demo mode prints example workflows without writing state, starting services, or launching agents.\n`);
   stream.write(`Dry-run mode writes durable Loop state and local wiki artifacts only.\n`);

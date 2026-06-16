@@ -302,6 +302,7 @@ test("manifest capability matches explicit CLI surfaces", async () => {
   assert.match(help, /loop doctor/);
   assert.match(help, /loop demo/);
   assert.match(help, /--no-notify/);
+  assert.match(help, /--just-run/);
   assert.match(help, /asks clarifying questions/);
 });
 

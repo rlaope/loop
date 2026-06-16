@@ -44,6 +44,12 @@ test("direct prompt dispatch opens processing TUI only for interactive shorthand
     stdoutTTY: true
   }), "processing-tui");
   assert.equal(directPromptTuiDispatch({
+    hasCommand: false,
+    stdinTTY: true,
+    stdoutTTY: true,
+    justRun: true
+  }), "standard-run");
+  assert.equal(directPromptTuiDispatch({
     hasCommand: true,
     stdinTTY: true,
     stdoutTTY: true

@@ -81,6 +81,7 @@ const booleanFlags = new Set([
   "--dry-run",
   "--help",
   "--follow",
+  "--just-run",
   "--no-interview",
   "--no-notify",
   "--read-only",
@@ -1168,7 +1169,8 @@ const isRunMode = command === "run" || has("--agent") || !command;
 const directPromptAction = directPromptTuiDispatch({
   hasCommand: Boolean(command),
   stdinTTY: Boolean(process.stdin.isTTY),
-  stdoutTTY: Boolean(process.stdout.isTTY)
+  stdoutTTY: Boolean(process.stdout.isTTY),
+  justRun: has("--just-run")
 });
 
 if (has("--dry-run")) {

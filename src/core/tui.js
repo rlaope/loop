@@ -49,10 +49,10 @@ export function noArgTuiDispatch({ argCount, stdinTTY, stdoutTTY }) {
 }
 
 /**
- * @param {{ hasCommand: boolean, stdinTTY: boolean, stdoutTTY: boolean }} input
+ * @param {{ hasCommand: boolean, stdinTTY: boolean, stdoutTTY: boolean, justRun?: boolean }} input
  */
-export function directPromptTuiDispatch({ hasCommand, stdinTTY, stdoutTTY }) {
-  if (!hasCommand && stdinTTY && stdoutTTY) {
+export function directPromptTuiDispatch({ hasCommand, stdinTTY, stdoutTTY, justRun = false }) {
+  if (!justRun && !hasCommand && stdinTTY && stdoutTTY) {
     return "processing-tui";
   }
   return "standard-run";

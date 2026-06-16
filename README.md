@@ -98,7 +98,8 @@ action, wiki count, graph count, and live log tail. When the agent exits, Loop
 finishes the state/wiki update and leaves you in the normal Agent Console.
 
 Use `loop run "prompt"` when you want the older explicit CLI stream that prints
-agent output and returns JSON for scripts.
+agent output and returns JSON for scripts. If you like the short command but
+want to skip the processing TUI for one run, use `loop "prompt" --just-run`.
 
 - `codex`
 - `claudecode`
@@ -108,6 +109,7 @@ You can skip the picker by passing the agent explicitly:
 ```sh
 loop run --agent codex "Build a darkwear luxury exhibition site"
 loop run --agent claudecode "Build a darkwear luxury exhibition site"
+loop --agent codex "Build a darkwear luxury exhibition site" --just-run
 ```
 
 After at least one run exists, typing only `loop` in an interactive terminal
