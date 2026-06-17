@@ -179,6 +179,68 @@ test("CLI wiki add attaches supporting notes to a loop run", async () => {
   assert.match(read, /- Parent loop: Wiki add maintenance/);
 });
 
+test("CLI wiki obsidian status is read-only before init", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-cli-obsidian-status-"));
+  const output = execFileSync(
+    process.execPath,
+    ["bin/loop.js", "wiki", "obsidian", "status", "--state-dir", stateDir],
+    { encoding: "utf8" }
+  );
+
+  assert.match(output, /Obsidian sync: not configured/);
+  assert.equal(existsSync(join(stateDir, "obsidian-sync.json")), false);
+  assert.equal(existsSync(join(stateDir, "obsidian-sync-manifest.json")), false);
+});
+
+test("CLI wiki obsidian init and sync mirror wiki markdown", async () => {
+  const root = await mkdtemp(join(tmpdir(), "loop-cli-obsidian-sync-"));
+  const project = join(root, "feedback-project");
+  const stateDir = join(project, ".loop");
+  const vault = join(root, "Vault");
+  const loopBin = resolve("bin/loop.js");
+  await mkdir(project, { recursive: true });
+  await mkdir(join(vault, ".obsidian"), { recursive: true });
+  const dryRun = execFileSync(
+    process.execPath,
+    [loopBin, "--dry-run", "--objective", "Obsidian CLI sync", "--state-dir", stateDir],
+    { cwd: project, encoding: "utf8" }
+  );
+  const parsed = JSON.parse(dryRun);
+  const init = execFileSync(
+    process.execPath,
+    [loopBin, "wiki", "obsidian", "init", "--state-dir", stateDir, "--vault", vault],
+    { cwd: project, encoding: "utf8" }
+  );
+  const sync = execFileSync(
+    process.execPath,
+    [loopBin, "wiki", "obsidian", "sync", "--state-dir", stateDir],
+    { cwd: project, encoding: "utf8" }
+  );
+  const manifest = JSON.parse(await readFile(join(stateDir, "obsidian-sync-manifest.json"), "utf8"));
+  const note = manifest.notes[parsed.wikiPaths.id];
+  const mirrored = await readFile(join(vault, note.obsidianRelativePath), "utf8");
+
+  assert.match(init, /Obsidian sync configured/);
+  assert.match(init, /feedback-project-[a-f0-9]{12}/);
+  assert.match(sync, /Obsidian sync complete/);
+  assert.match(sync, /Loop to Obsidian: 1/);
+  assert.match(mirrored, /# Obsidian CLI sync/);
+});
+
+test("CLI wiki obsidian expected failures avoid uncaught stack traces", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "loop-cli-obsidian-fail-"));
+  const result = spawnSync(
+    process.execPath,
+    ["bin/loop.js", "wiki", "obsidian", "sync", "--state-dir", stateDir],
+    { encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Obsidian sync failed: Obsidian sync is not configured/);
+  assert.doesNotMatch(result.stderr, /at async|Error:/);
+  assert.equal(result.stdout, "");
+});
+
 test("CLI dry-run reports wiki failure after durable state write", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "loop-cli-wiki-fail-"));
   await writeFile(join(stateDir, "wiki"), "occupied");

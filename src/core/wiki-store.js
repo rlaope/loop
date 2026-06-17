@@ -1006,6 +1006,20 @@ function shortSummaryFromMarkdown(markdown) {
 }
 
 /**
+ * @param {string} markdown
+ */
+function supportingBodyFromMarkdown(markdown) {
+  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  const noteHeadingIndex = lines.findIndex((line) => /^##\s+(Note|노트)\s*$/i.test(line.trim()));
+  const contentLines = noteHeadingIndex === -1 ? lines : lines.slice(noteHeadingIndex + 1);
+  const nextHeadingIndex = contentLines.findIndex((line) => /^##\s+/.test(line.trim()));
+  const body = (nextHeadingIndex === -1 ? contentLines : contentLines.slice(0, nextHeadingIndex))
+    .join("\n")
+    .trim();
+  return body || markdown.trim() || "Loop Wiki note.";
+}
+
+/**
  * @param {import("./run-state.js").LoopRunState} state
  * @param {{ id: string, noteRelativePath: string, markdown: string, markdownHash: string, generatedMarkdownHash: string, links: WikiLink[], paths?: WikiRunPaths }} options
  */
@@ -1445,6 +1459,93 @@ export async function deleteWikiNote(id, { stateDir = DEFAULT_STATE_DIR } = {}) 
   await writeFile(indexPath, `${JSON.stringify(nextIndex, null, 2)}\n`);
   await writeFile(graphPath, `${JSON.stringify(buildGraph(nextIndex, nextIndex.updatedAt), null, 2)}\n`);
   return { deleted: index.notes.some((note) => note.id === id), id };
+}
+
+/**
+ * Refresh derived wiki artifacts after a human-facing markdown note was edited
+ * outside the normal Loop writer path.
+ *
+ * @param {string} id
+ * @param {{ stateDir?: string, now?: Date }} [options]
+ */
+export async function refreshWikiNoteDerivedArtifacts(id, { stateDir = DEFAULT_STATE_DIR, now = new Date() } = {}) {
+  assertSafeId(id);
+  const { aiDir, indexPath, graphPath } = wikiPath(stateDir);
+  const index = await readWikiIndex({ stateDir });
+  const entry = index.notes.find((note) => note.id === id);
+  if (!entry) {
+    throw new Error(`Loop Wiki note not found: ${id}`);
+  }
+
+  const notePath = wikiNotePath({ stateDir, id });
+  const memoryPath = wikiMemoryPath({ stateDir, id });
+  const markdown = await readFile(notePath, "utf8");
+  const markdownHash = hashText(markdown);
+  const summary = shortSummaryFromMarkdown(markdown);
+  const nowIso = now.toISOString();
+  /** @type {Record<string, unknown>} */
+  let previousMemory = {};
+  try {
+    const parsed = JSON.parse(await readFile(memoryPath, "utf8"));
+    if (isRecord(parsed)) {
+      previousMemory = parsed;
+    }
+  } catch (error) {
+    if (getErrorCode(error) !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  const previousGenerator = isRecord(previousMemory.generator) ? previousMemory.generator : {};
+  const memory = {
+    ...previousMemory,
+    version: 1,
+    id,
+    kind: entry.kind,
+    parentId: entry.parentId,
+    parentTitle: entry.parentTitle,
+    canonicalNote: relative(aiDir, notePath),
+    derivedFromHash: markdownHash,
+    generator: {
+      ...previousGenerator,
+      markdownHash,
+      source: typeof previousGenerator.source === "string" ? previousGenerator.source : "loop-imported-note"
+    },
+    runIds: entry.runId ? [entry.runId] : [],
+    objective: entry.objective,
+    objectiveSlug: entry.objectiveSlug,
+    title: entry.title,
+    summary,
+    status: entry.status,
+    phase: entry.phase,
+    session: entry.session ?? null,
+    graph: {
+      tags: entry.tags,
+      links: entry.links
+    },
+    tokens: entry.tokens,
+    createdAt: entry.createdAt,
+    updatedAt: nowIso,
+    ...(entry.kind === "run" ? {} : { body: supportingBodyFromMarkdown(markdown) })
+  };
+  const nextEntry = {
+    ...entry,
+    summary,
+    updatedAt: nowIso
+  };
+  const nextIndex = upsertIndexEntry(index, nextEntry, nowIso);
+
+  await writeFile(memoryPath, `${JSON.stringify(memory, null, 2)}\n`);
+  await writeFile(indexPath, `${JSON.stringify(nextIndex, null, 2)}\n`);
+  await writeFile(graphPath, `${JSON.stringify(buildGraph(nextIndex, nowIso), null, 2)}\n`);
+  return {
+    id,
+    notePath,
+    memoryPath,
+    indexPath,
+    graphPath,
+    summary
+  };
 }
 
 /**

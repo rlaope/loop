@@ -3,11 +3,12 @@
 | Surface | MVP behavior | Notes |
 | --- | --- | --- |
 | Codex `$loop` / `$Loop` | Shipped first. | `$loop <objective>` and the display-case `$Loop <objective>` map to the Codex skill in `skills/loop/SKILL.md`. |
-| Loop Agent Console TUI | Shipped keyboard-first baseline. | `loop` with no arguments opens a terminal console with Tab/arrow focus navigation, Enter-opened run pickers and action menus, confirmation overlays for completion/Codex launch, two-field note input, wiki/log reading, lineage-preserving follow-up intent, dashboard open, and Codex resume actions when a session id is known. |
+| Loop Agent Console TUI | Shipped keyboard-first baseline. | `loop` with no arguments opens a terminal console with Tab/arrow focus navigation, Enter-opened run pickers and action menus, confirmation overlays for completion/Codex launch, two-field note input, wiki/log reading, Obsidian settings, lineage-preserving follow-up intent, dashboard open, and Codex resume actions when a session id is known. |
 | Loop CLI Codex agent | Prototype. | `loop run --agent codex "prompt"` launches `codex exec` after Loop state and safety checks. |
 | Loop CLI Claude Code agent | Prototype. | `loop run --agent claudecode "prompt"` launches `claude --print` after Loop state and safety checks. |
 | Loop Wiki CLI | Shipped local baseline. | `loop wiki list/read/open/serve` reads `.loop/wiki` notes and serves a localhost dashboard. |
 | Loop Wiki dashboard actions | Shipped local baseline. | Dashboard forms use persisted server-issued confirmation tokens for local mutations and external Codex terminal launch. |
+| Loop Wiki Obsidian sync | Shipped local filesystem baseline. | `loop wiki obsidian status/init/sync/watch/install-service` mirrors only `.loop/wiki/user/*.md` into an explicit vault path under `Loop/<project-name>-<project-id>/`; derived AI/index/graph artifacts stay local and are regenerated after content imports. Delete and rename propagation is roadmap work. |
 | Codex `/goal` | Interop only. | Long-running goal tracking can wrap the durable plan, but the core state remains local. |
 | Codex automations | Read-only or triage-only by default. | Write-capable automation requires durable human approval. |
 | Codex worktrees | Supported as an isolation decision. | Code-changing loops should prefer worktree or branch isolation. |

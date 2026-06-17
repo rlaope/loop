@@ -78,6 +78,32 @@ Loop Wiki is local-first:
   If `.loop/wiki` cannot be written, the command exits with code 6 after
   preserving the durable `.loop/runs` state.
 
+## Obsidian Sync
+
+Obsidian integration is local filesystem sync, not a hosted connector:
+
+- `loop wiki obsidian status` is read-only.
+- `loop wiki obsidian init --vault <path>` is explicit opt-in and creates a
+  project-scoped folder under `<vault>/Loop/<project-name>-<project-id>/`.
+- Only `.loop/wiki/user/*.md` is mirrored to Obsidian. AI memory JSON, graph,
+  index, run state, logs, dashboard secrets, and raw agent internals stay under
+  the Loop state directory.
+- Obsidian-to-Loop imports refresh the derived AI memory, index, and graph from
+  the canonical markdown when the markdown content changes.
+- Delete and rename propagation is not part of the MVP. A missing Obsidian
+  mirror file is restored from the canonical Loop Wiki note; users should delete
+  notes through Loop commands or the local dashboard when they want Loop state
+  to change.
+- If both Loop and Obsidian change the same note, Loop attempts only a
+  conservative merge. Otherwise it writes a conflict file under
+  `.loop/wiki/conflicts`, marks that note paused in the manifest, and refuses to
+  overwrite either side.
+- `loop wiki obsidian watch` is a local polling loop with single-flight sync so
+  overlapping sync attempts do not pile up.
+- `loop wiki obsidian install-service` currently writes a macOS LaunchAgent
+  only after sync has been configured; unsupported platforms must use `watch`
+  manually.
+
 ## Human Ownership
 
 The loop can collect evidence. The engineer still owns comprehension,

@@ -2,9 +2,9 @@
 
 This roadmap keeps the first release honest: the MVP ships durable Loop state,
 dry-run safety checks, a local Agent Console TUI, a local Loop Wiki dashboard,
-and a prototype `loop run` surface for Codex and Claude Code. Rich automation,
-native command adapters, external sync, and hosted knowledge storage remain
-future work.
+local Obsidian markdown mirroring, and a prototype `loop run` surface for Codex
+and Claude Code. Rich automation, native command adapters, cloud sync, and
+hosted knowledge storage remain future work.
 
 ## Public Alpha Readiness
 
@@ -34,7 +34,15 @@ future work.
   `.loop/wiki/graph.json` from the canonical note and run metadata.
 - Keep local dashboard actions token-confirmed and localhost-bound.
 - Keep exact token usage as `unknown` unless an agent reports it directly.
-- Defer external sync to GitHub, Linear, Notion, Obsidian, or cloud services.
+- Ship local Obsidian filesystem sync for human-facing markdown notes only.
+  Mirror files under `Loop/<project-name>-<project-id>/`, import Obsidian
+  markdown content edits back into `.loop/wiki/user`, regenerate derived
+  AI/index/graph artifacts, restore missing mirror files from the Loop
+  canonical note, and pause conflicted notes instead of overwriting either side.
+- Defer Obsidian delete/rename propagation until a tombstone and move contract
+  exists in the manifest.
+- Defer external sync to GitHub, Linear, Notion, hosted Obsidian services, or
+  cloud knowledge stores.
 
 ## Plugins And Connectors
 
